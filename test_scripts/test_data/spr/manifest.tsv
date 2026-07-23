@@ -1,0 +1,2 @@
+fixture	alignment	start_tree	reference_tree	constraint_tree	intended_checks
+six_taxa	six_taxa.phy	six_taxa.start.tree	six_taxa.reference.tree	six_taxa.ab.constraint.tree	candidate legality; apply/rollback restoration; bounded SPR improvement; constraint compatibility

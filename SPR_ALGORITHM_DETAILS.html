@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IQ-TREE 3 ML-SPR Algorithm Design</title>
+<style>
+  @page { size: Letter; margin: .72in; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #17202a; font-size: 10pt; line-height: 1.42; }
+  h1 { font-size: 24pt; color: #123b5d; margin: 0 0 4px; }
+  h2 { font-size: 15pt; color: #123b5d; border-bottom: 1px solid #9ab6ca; padding-bottom: 3px; margin: 24px 0 8px; break-after: avoid; }
+  h3 { font-size: 11.5pt; color: #1f5b82; margin: 16px 0 5px; break-after: avoid; }
+  p { margin: 5px 0 8px; }
+  ul, ol { margin: 4px 0 9px; padding-left: 22px; }
+  li { margin: 2px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; page-break-inside: avoid; }
+  th { background: #e9f1f6; color: #123b5d; }
+  th, td { border: 1px solid #bdd0dd; padding: 5px 6px; text-align: left; vertical-align: top; }
+  code { font-family: Consolas, monospace; font-size: 9pt; background: #f2f4f5; padding: 1px 3px; }
+  pre { font-family: Consolas, monospace; font-size: 8.7pt; background: #f2f4f5; border-left: 3px solid #5a8aac; padding: 8px; white-space: pre-wrap; line-height: 1.3; }
+  .subtitle { color: #506a7d; font-size: 12pt; margin: 0 0 16px; }
+  .decision { background: #eaf5ee; border-left: 4px solid #438b62; padding: 8px 10px; margin: 10px 0; }
+  .note { background: #fff7df; border-left: 4px solid #e1ab34; padding: 8px 10px; margin: 10px 0; }
+  .small { font-size: 8.8pt; color: #506a7d; }
+</style>
+</head>
+<body>
+<h1>ML-SPR Algorithm Design for IQ-TREE 3</h1>
+<p class="subtitle">Detailed topology-search design for an IQ-TREE 3 fork &mdash; 21 July 2026</p>
+
+<h2>1. Recommended algorithm at a glance</h2>
+<p>Implement a <strong>bounded-radius maximum-likelihood SPR hill climber</strong>. Generate legal candidates from the current tree without mutating it; screen them cheaply; exactly re-evaluate a bounded shortlist using reversible topology changes; commit one best improving move; then repeat.</p>
+<div class="decision"><strong>First-release policy:</strong> unrooted binary single-tree analyses, a configurable small radius, serial evaluation, one accepted move per round, and exact full-branch reoptimization after a move is committed.</div>
+<pre>current tree
+  → enumerate legal bounded SPR moves
+  → provisional local scoring of all moves
+  → exact scoring of top K moves
+  → commit one move only if it improves exact likelihood
+  → reoptimize branches and update all search state
+  → repeat until no improvement</pre>
+
+<h2>2. Tree and move model</h2>
+<h3>2.1 Assumptions</h3>
+<ul>
+  <li>The first implementation supports connected, unrooted, binary trees.</li>
+  <li>Each internal node has degree three; a tree with <em>n</em> leaves has <code>2n - 3</code> edges.</li>
+  <li>An SPR move is specified by a directed prune edge and an undirected target edge.</li>
+  <li>Target edges inside the pruned component are illegal because they create a cycle or otherwise fail to change the intended topology.</li>
+</ul>
+<h3>2.2 One unrooted SPR move</h3>
+<p>Select directed edge <code>u → x</code>, where <code>x</code> is the root of the subtree to detach and <code>u</code> is the former attachment node. The remaining two neighbors of <code>u</code> are <code>a</code> and <code>b</code>.</p>
+<pre>Before pruning:                   After pruning/suppression:
+
+      x                                      x (detached)
+      |                                      |
+a ----u---- b                           a -------- b
+      |
+   prune edge</pre>
+<p>Suppressing <code>u</code> connects <code>a</code> and <code>b</code>. A safe initial length is:</p>
+<pre>L(a,b) = L(a,u) + L(u,b)</pre>
+<p>Next select a legal target edge <code>r—s</code>, split it by placing/reusing <code>u</code>, and attach the detached subtree through <code>u—x</code>.</p>
+<pre>Target before regraft:            Target after regraft:
+
+r -------- s                              r
+                                           \
+                                            u ---- x
+                                           /
+                                          s</pre>
+<p>The target length can initially be divided equally, or by a more informed local optimizer:</p>
+<pre>L(r,u) = L(u,s) = L(r,s) / 2</pre>
+<p>All affected lengths are subsequently optimized. The initial split is an initialization, not an ML estimate.</p>
+
+<h2>3. Candidate generation</h2>
+<h3>3.1 Why it needs a bound</h3>
+<p>There are roughly <code>2(2n - 3)</code> directed prune choices and <code>O(n)</code> target edges per choice. An unrestricted neighborhood is therefore <code>O(n²)</code> candidates per round before likelihood evaluation. Full likelihood calculations make that cost prohibitive for ordinary large-tree searches.</p>
+<p>Define <code>spr_radius</code> as the number of tree edges between the former attachment region and the target edge in the remaining tree. A bounded radius yields a local neighborhood whose practical size is approximately <code>O(n × 2^radius)</code> in a binary tree.</p>
+<h3>3.2 Generation procedure</h3>
+<ol>
+  <li>Enumerate each possible directed prune edge <code>u → x</code>.</li>
+  <li>Find the component rooted at <code>x</code> when the edge is cut, without modifying the tree.</li>
+  <li>Traverse the complement starting at the former <code>u</code> attachment region using BFS.</li>
+  <li>Collect target edges reached within the configured radius.</li>
+  <li>Exclude the original attachment edge, targets in the detached component, and moves that reproduce the original unrooted topology.</li>
+  <li>Canonicalize and deduplicate move descriptions.</li>
+  <li>Reject constraint-incompatible moves before likelihood scoring where possible.</li>
+</ol>
+<pre>generateCandidates(tree, radius):
+    result = empty set
+    for each directed edge (parent u, child x):
+        pruned = markComponent(x, blocked=u)
+        for each edge (r, s) in BFS_edges(start=u, max_distance=radius):
+            if r or s is in pruned: continue
+            move = canonicalize(u, x, r, s)
+            if isIdentity(move) or move in result: continue
+            if violatesConstraint(move): continue
+            result.add(move)
+    return result</pre>
+<h3>3.3 Candidate identity and deduplication</h3>
+<p>The same final unrooted topology can be discovered by more than one traversal direction. Use a canonical representation based on the normalized prune directed edge plus a normalized target endpoint pair, or verify uniqueness with split hashes in debug/test mode. Regenerate candidates after every accepted move; candidate pointers/iterators should never survive a committed topology mutation.</p>
+
+<h2>4. Transactional topology operations</h2>
+<p>All likelihood evaluation depends on one core rule: temporary candidates must be reversible. Separate immutable move intent from mutable rollback state.</p>
+<pre>SPRMove
+    prune_parent, prune_child
+    target_left, target_right
+    radius
+    screening_score, exact_score
+
+SPRRollback
+    original endpoints and reciprocal neighbor state
+    original lengths for all rewired edges
+    original root/direction state if relevant
+    branch-length snapshot if temporary optimization changes lengths</pre>
+<h3>4.1 Required operations</h3>
+<table>
+<tr><th>Operation</th><th>Must do</th><th>Must not do</th></tr>
+<tr><td><code>isLegalSPR</code></td><td>Check membership, binary assumptions, target outside pruned component, identity, and constraints.</td><td>Mutate the tree.</td></tr>
+<tr><td><code>applySPR</code></td><td>Record every affected reciprocal link and length, suppress old attachment, split target, reconnect subtree.</td><td>Rely on later inference to recover old state.</td></tr>
+<tr><td><code>rollbackSPR</code></td><td>Restore the recorded original state exactly.</td><td>Attempt to infer old adjacency from a changed tree.</td></tr>
+<tr><td><code>scoreSPR</code></td><td>Apply, invalidate, optimize, calculate, and roll back.</td><td>Leak a temporary candidate into checkpoints or candidate trees.</td></tr>
+<tr><td><code>commitSPR</code></td><td>Apply a chosen exact move, optimize, and update score/search state.</td><td>Commit from a screening score.</td></tr>
+</table>
+<h3>4.2 Structural invariants</h3>
+<ul>
+  <li>Every neighbor link is reciprocal.</li>
+  <li>The tree remains connected and acyclic.</li>
+  <li>Taxon IDs and names never change.</li>
+  <li>No degree-two internal node remains after suppression/regrafting.</li>
+  <li>Edge count remains <code>2n - 3</code> for an unrooted binary tree.</li>
+  <li>Applying and rolling back a candidate restores Newick topology, branch lengths, and likelihood within numeric tolerance.</li>
+</ul>
+
+<h2>5. Likelihood evaluation</h2>
+<h3>5.1 Why SPR is harder than NNI</h3>
+<p>NNI changes a fixed local five-branch neighborhood. An SPR move changes local topology at both ends and can alter the partial-likelihood dependency path between them. An optimization that reuses stale partial likelihoods can silently choose an incorrect tree. Correctness must precede incremental-cache optimization.</p>
+<h3>5.2 Conservative baseline</h3>
+<ol>
+  <li>Apply one temporary candidate.</li>
+  <li>Clear all partial likelihoods using the established tree routine.</li>
+  <li>Optimize branches according to the evaluation mode.</li>
+  <li>Compute likelihood through the normal exact tree likelihood path.</li>
+  <li>Roll back topology and branch lengths.</li>
+  <li>Clear/recompute caches as required so the restored tree cannot read partials from the temporary topology.</li>
+</ol>
+<p>This may be expensive, but it creates a trustworthy reference implementation for later local invalidation.</p>
+<h3>5.3 Two-stage scoring</h3>
+<table>
+<tr><th>Stage</th><th>Purpose</th><th>Branch optimization</th><th>Use</th></tr>
+<tr><td>Screening</td><td>Rank many candidates cheaply.</td><td>Attachment branch plus the branches created by suppressing/splitting edges.</td><td>Only to retain top K candidates.</td></tr>
+<tr><td>Exact</td><td>Decide whether a candidate can be committed.</td><td>Initially optimize all branches; later use a proven equivalent affected-region procedure.</td><td>Acceptance decision only.</td></tr>
+</table>
+<pre>evaluateCandidate(move, mode):
+    rollback = applySPR(move)
+    clearAllPartialLH()
+    if mode == SCREEN:
+        optimizeLocalSPRBranches(move)
+    else:
+        optimizeAllBranches()
+    score = computeLikelihood()
+    rollbackSPR(rollback)
+    clearAllPartialLH()
+    return score</pre>
+<div class="note"><strong>Acceptance rule:</strong> a candidate is accepted only when its exact score is greater than <code>curScore + loglh_epsilon</code>. Screening scores are never accepted directly.</div>
+
+<h2>6. Search loop and score ownership</h2>
+<pre>curScore = computeExactLikelihood(current_tree)
+
+for round in 1 .. max_rounds:
+    candidates = generateCandidates(current_tree, spr_radius)
+    screened = priorityQueue(capacity = top_k)
+
+    for move in candidates:
+        move.screening_score = evaluateCandidate(move, SCREEN)
+        screened.insert_if_top_k(move)
+
+    best = none
+    for move in screened:
+        move.exact_score = evaluateCandidate(move, EXACT)
+        if best is none or move.exact_score > best.exact_score:
+            best = move
+
+    if best is none or best.exact_score <= curScore + epsilon:
+        stop with "no improving bounded SPR move"
+
+    commitSPR(best)
+    optimizeAllBranches()
+    curScore = computeExactLikelihood(current_tree)
+    assert curScore > previous_score + epsilon
+    update best tree, candidate trees, checkpoint, report statistics</pre>
+<p>Commit one move per round. Applying several apparently non-overlapping moves is unsafe initially because two SPRs can interact through pruned components, target paths, shared branches, and likelihood-cache dependencies.</p>
+
+<h2>7. Constraints, roots, and derived tree types</h2>
+<h3>7.1 Constraint trees</h3>
+<p>The safe first approach is to apply a temporary candidate, invoke a tree-level constraint compatibility check, then roll back. This is slower than split-based prefiltering but is straightforward to validate. Once the core search is stable, precompute candidate split changes to reject incompatible moves before likelihood evaluation.</p>
+<h3>7.2 Rooted/nonreversible models</h3>
+<p>Directional partial likelihoods and root direction must be updated deliberately. If the base mutation API does not prove this correct, reject SPR for such analyses in version 1 rather than silently using the unrooted logic.</p>
+<h3>7.3 Supertrees, partitions, and mixtures</h3>
+<p>Base <code>PhyloTree</code> rewiring cannot automatically maintain linked partition trees, supertree neighbor mappings, or mixture-specific branch lengths. The first implementation should explicitly reject unsupported derived tree types. Later support requires subclass overrides comparable to the existing NNI overrides.</p>
+
+<h2>8. Complexity and tuning</h2>
+<table>
+<tr><th>Component</th><th>Unbounded behavior</th><th>Bounded version</th></tr>
+<tr><td>Candidate count</td><td><code>O(n²)</code> per round</td><td>Approximately <code>O(n × 2^r)</code> for radius <code>r</code></td></tr>
+<tr><td>Screening cost</td><td>One local likelihood evaluation per candidate</td><td>Limited by radius; further limited by optional sampling later</td></tr>
+<tr><td>Exact cost</td><td>Potentially one full branch optimization per candidate</td><td>Limited to top K screened moves</td></tr>
+<tr><td>Rounds</td><td>Can be large in a naive hill climber</td><td>Limited by no-improvement, round cap, and time budget</td></tr>
+</table>
+<p>Recommended initial tuning is intentionally conservative: radius 3&ndash;5, exact shortlist 10&ndash;20, one committed move per round, and a finite round cap. Benchmark likelihood gain per added wall-clock time before enlarging defaults.</p>
+
+<h2>9. Test design</h2>
+<ol>
+  <li><strong>Exhaustive small-tree move tests:</strong> enumerate every legal bounded move; apply; validate; roll back; compare topology and lengths with a snapshot.</li>
+  <li><strong>Score-restoration tests:</strong> original likelihood before temporary evaluation equals likelihood after rollback within tolerance.</li>
+  <li><strong>Monotonicity tests:</strong> every committed move improves a fresh full likelihood calculation.</li>
+  <li><strong>Candidate tests:</strong> no target inside pruned component; no duplicates; known counts on hand-enumerated trees.</li>
+  <li><strong>Constraint tests:</strong> invalid candidates are never committed.</li>
+  <li><strong>Determinism tests:</strong> fixed input/options/seed produce identical final topology and score.</li>
+  <li><strong>Regression tests:</strong> SPR-disabled runs reproduce existing NNI-only behavior.</li>
+  <li><strong>Resume tests:</strong> a checkpoint at a committed round boundary resumes to the same result as an uninterrupted run.</li>
+</ol>
+
+<h2>10. Repository implementation locations</h2>
+<table>
+<tr><th>Concern</th><th>Primary location</th><th>Action</th></tr>
+<tr><td>Move structures and low-level APIs</td><td><code>tree/phylotree.h</code></td><td>Replace/extend legacy <code>SPRMove</code>; add rollback and mutation/evaluation declarations.</td></tr>
+<tr><td>Topology mutation and likelihood evaluation</td><td><code>tree/phylotree.cpp</code></td><td>Implement transactional apply/rollback and conservative score evaluation; use legacy routines only as reference.</td></tr>
+<tr><td>Search orchestration</td><td><code>tree/iqtree.h</code>, <code>tree/iqtree.cpp</code></td><td>Add SPR search loop alongside mature NNI search lifecycle.</td></tr>
+<tr><td>Workflow invocation</td><td><code>main/phyloanalysis.cpp</code></td><td>Call integrated SPR refinement/search instead of direct prototype code.</td></tr>
+<tr><td>CLI configuration</td><td><code>utils/tools.h</code>, <code>utils/tools.cpp</code></td><td>Expose radius, top K, rounds, epsilon, and mode; remove hard-coded behavior.</td></tr>
+<tr><td>Reference implementation</td><td><code>pll/searchAlgo.c</code></td><td>Study its candidate ranking and rollback patterns; do not merge its tree representation directly.</td></tr>
+</table>
+
+<h2>11. Optimization sequence after correctness</h2>
+<ol>
+  <li>Full cache clearing and exact all-branch evaluation.</li>
+  <li>Bounded candidate radius and top-K exact shortlist.</li>
+  <li>Local branch optimization for screening.</li>
+  <li>Proven local partial-likelihood invalidation along old/new attachment paths.</li>
+  <li>Candidate prescreening with parsimony, distance, or a safe likelihood bound.</li>
+  <li>Parallel exact evaluation only with independent temporary trees or rigorously isolated state.</li>
+</ol>
+<p class="small">The governing principle is simple: a slower candidate evaluator that is exactly reversible and scores the right topology is a useful baseline; a faster evaluator that leaves stale partial likelihoods is not.</p>
+</body>
+</html>

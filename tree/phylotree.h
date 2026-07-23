@@ -164,7 +164,7 @@ typedef std::map< int, PhyloNode* > IntPhyloNodeMap;
 #define MappedVecDyn(NSTATES) Map<Matrix<double, Dynamic, NSTATES> >
 */
 
-const int MAX_SPR_MOVES = 20;
+const int MAX_SPR_MOVES_LEGACY = 20;
 
 struct NNIMove {
 
@@ -192,8 +192,11 @@ struct NNIMove {
 
 /**
         an SPR move.
+        LEGACY PROTOTYPE: used only by the dormant optimizeSPR()/swapSPR() search
+        below. Kept as a behavioral reference; see SPRMove for the move
+        representation used by the modern SPR API.
  */
-struct SPRMove {
+struct SPRMoveLegacy {
     PhyloNode *prune_dad;
     PhyloNode *prune_node;
     PhyloNode *regraft_dad;
@@ -203,15 +206,79 @@ struct SPRMove {
 
 struct SPR_compare {
 
-    bool operator()(SPRMove s1, SPRMove s2) const {
+    bool operator()(SPRMoveLegacy s1, SPRMoveLegacy s2) const {
         return s1.score > s2.score;
     }
 };
 
-class SPRMoves : public set<SPRMove, SPR_compare> {
+class SPRMovesLegacy : public set<SPRMoveLegacy, SPR_compare> {
 public:
     void add(PhyloNode *prune_node, PhyloNode *prune_dad,
             PhyloNode *regraft_node, PhyloNode *regraft_dad, double score);
+};
+
+/**
+        A candidate SPR (subtree pruning and regrafting) move, described by value
+        rather than by live pointers/iterators into the tree. Produced by candidate
+        generation, ranked by screening_score, and only mutates the tree when
+        passed to applySPR()/scoreSPR()/commitSPR().
+        See SPR_IMPLEMENTATION_PLAN section 4.2. NOTE: the modern SPR search that
+        produces and consumes these is not implemented yet.
+ */
+struct SPRMove {
+
+    // directed cut edge: prune_node is detached from prune_dad
+    PhyloNode *prune_node;
+    PhyloNode *prune_dad;
+
+    // target edge (undirected) that the pruned subtree is regrafted onto;
+    // must lie outside the pruned subtree
+    PhyloNode *regraft_node;
+    PhyloNode *regraft_dad;
+
+    // topological distance from the original attachment point at which this
+    // candidate was generated
+    int radius;
+
+    // approximate score used to rank/shortlist candidates without full branch
+    // re-optimization; not a valid final likelihood
+    double screening_score;
+
+    // fully re-optimized likelihood score; only meaningful after scoreSPR()
+    // or commitSPR() has been called on this move
+    double exact_score;
+
+    // identifies this candidate within its generation round, for logging and
+    // diagnostics
+    int candidate_id;
+    int generation;
+
+    bool operator<(const SPRMove &rhs) const {
+        return screening_score > rhs.screening_score;
+    }
+};
+
+/**
+        State required to undo a single applySPR() call and restore the tree to
+        its exact pre-move topology and branch lengths.
+        See SPR_IMPLEMENTATION_PLAN section 4.2. NOTE: not populated or consumed
+        by any implementation yet.
+ */
+struct SPRRollback {
+
+    // original (target node, branch length) for every neighbor slot rewired
+    // by applySPR, so rollbackSPR can restore them directly instead of
+    // re-deriving the prior topology from the mutated tree
+    struct SavedNeighbor {
+        Neighbor *nei;
+        Node *orig_node;
+        double orig_length;
+    };
+    vector<SavedNeighbor> saved_neighbors;
+
+    // conservative marker: when true, rollbackSPR/invalidateSPRPartials should
+    // clear all partial likelihoods rather than only the affected frontier
+    bool clear_all_partial_lh;
 };
 
 /*
@@ -1864,7 +1931,9 @@ public:
 
     /****************************************************************************
             Subtree Pruning and Regrafting by maximum likelihood
-            NOTE: NOT DONE YET
+            LEGACY PROTOTYPE: dormant, experimental, kept as a behavioral
+            reference only (see SPR_IMPLEMENTATION_PLAN). Not wired into the
+            production search lifecycle. Superseded by the modern SPR API below.
      ****************************************************************************/
 
     /**
@@ -1908,12 +1977,74 @@ public:
             PhyloNode *orig_node1, PhyloNode *orig_node2,
             PhyloNode *node2, PhyloNode *dad2, vector<PhyloNeighbor*> &spr_path);
 
-    double assessSPRMove(double cur_score, const SPRMove &spr);
+    double assessSPRMove(double cur_score, const SPRMoveLegacy &spr);
 
     // void pruneSubtree(PhyloNode *node, PhyloNode *dad, PruningInfo &info);
 
     /*void regraftSubtree(PruningInfo &info,
             PhyloNode *in_node, PhyloNode *in_dad);*/
+
+    /****************************************************************************
+            Subtree Pruning and Regrafting by maximum likelihood (modern API)
+            Transactional move API mirroring the NNI move lifecycle
+            (getBestNNIForBran / doNNI / changeNNIBrans): candidates are
+            generated without mutating the tree, scored through a reversible
+            apply/rollback transaction, and only committed once. See
+            SPR_IMPLEMENTATION_PLAN section 4.3.
+            NOTE: declarations only, not implemented yet.
+     ****************************************************************************/
+
+    /**
+            test whether an SPR move is legal: target edge outside the pruned
+            subtree, not a no-op, consistent with the binary-tree invariant,
+            and compatible with any constraint tree. Never mutates the tree.
+            @param move candidate SPR move
+            @return true if the move may be applied
+     */
+    bool isLegalSPR(const SPRMove &move);
+
+    /**
+            apply a single SPR move to the tree, rewiring exactly the edges
+            required to detach the pruned subtree and regraft it onto the
+            target edge.
+            @param move the SPR move to apply
+            @param rollback (OUT) state required to undo this move via rollbackSPR
+     */
+    void applySPR(const SPRMove &move, SPRRollback &rollback);
+
+    /**
+            undo a previously applied SPR move, restoring the exact topology
+            and branch lengths that were present before applySPR was called.
+            @param rollback state previously produced by applySPR
+     */
+    void rollbackSPR(const SPRRollback &rollback);
+
+    /**
+            invalidate partial likelihoods affected by the topology and/or
+            branch-length changes introduced by applySPR, so no stale partial
+            is reused afterwards.
+            @param move the SPR move that was just applied
+     */
+    void invalidateSPRPartials(const SPRMove &move);
+
+    /**
+            apply, (re-)optimize, and score an SPR candidate, then roll it back
+            unless commit is requested. Leaves no mutation on the tree for a
+            rejected/evaluated candidate.
+            @param move candidate SPR move; exact_score is filled in
+            @param cur_score current likelihood score, used as the rollback baseline
+            @param commit if true, leave the move applied instead of rolling back
+            @return the re-optimized likelihood score after applying the move
+     */
+    double scoreSPR(SPRMove &move, double cur_score, bool commit = false);
+
+    /**
+            apply an SPR move permanently: rewires the tree, re-optimizes the
+            affected branches, and updates the current likelihood score.
+            @param move the SPR move to commit
+            @return the new likelihood score of the tree
+     */
+    double commitSPR(SPRMove &move);
 
     /****************************************************************************
             Approximate Likelihood Ratio Test with SH-like interpretation
@@ -2407,11 +2538,13 @@ protected:
 
     /**
             spr moves
+            LEGACY PROTOTYPE: used only by the dormant optimizeSPR()/swapSPR() search.
      */
-    SPRMoves spr_moves;
+    SPRMovesLegacy spr_moves;
 
     /**
             SPR radius
+            LEGACY PROTOTYPE: used only by the dormant optimizeSPR()/swapSPR() search.
      */
     int spr_radius;
 

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IQ-TREE 3 ML-SPR Implementation Plan</title>
+<style>
+  @page { size: Letter; margin: 0.72in; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #17202a; font-size: 10pt; line-height: 1.38; }
+  h1 { color: #123b5d; font-size: 24pt; margin: 0 0 4px; }
+  h2 { color: #123b5d; border-bottom: 1px solid #9ab6ca; font-size: 15pt; margin: 24px 0 8px; padding-bottom: 3px; break-after: avoid; }
+  h3 { color: #1f5b82; font-size: 11.5pt; margin: 16px 0 5px; break-after: avoid; }
+  h4 { margin: 11px 0 3px; font-size: 10.2pt; }
+  p { margin: 5px 0 8px; }
+  ul, ol { margin: 4px 0 9px; padding-left: 22px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 12px; page-break-inside: avoid; }
+  th { background: #e9f1f6; color: #123b5d; }
+  th, td { border: 1px solid #bdd0dd; padding: 5px 6px; vertical-align: top; }
+  code { font-family: Consolas, monospace; font-size: 9pt; background: #f2f4f5; padding: 1px 3px; }
+  pre { background: #f2f4f5; border-left: 3px solid #5a8aac; padding: 8px; white-space: pre-wrap; }
+  .subtitle { color: #506a7d; font-size: 12pt; margin: 0 0 16px; }
+  .note { background: #fff7df; border-left: 4px solid #e1ab34; padding: 8px 10px; margin: 10px 0; }
+  .decision { background: #eaf5ee; border-left: 4px solid #438b62; padding: 8px 10px; margin: 10px 0; }
+  .small { color: #506a7d; font-size: 8.8pt; }
+  .pagebreak { break-before: page; }
+</style>
+</head>
+<body>
+<h1>ML Subtree-Pruning-and-Regrafting (SPR) for IQ-TREE 3</h1>
+<p class="subtitle">Detailed implementation roadmap for the local IQ-TREE 3 fork &mdash; 21 July 2026</p>
+
+<h2>1. Executive summary</h2>
+<p>This project is feasible. IQ-TREE 3 already contains a dormant, experimental maximum-likelihood SPR implementation in <code>tree/phylotree.cpp</code>, wired to a <code>-spr</code> switch. It provides useful evidence about the intended topology representation, but it is not a safe foundation for a production search without refactoring: it has hard-coded search limits, debug output, incomplete state handling, mixed legacy/new routines, and does not participate in the mature <code>IQTree</code> search lifecycle.</p>
+<p>The recommended outcome is a bounded-radius ML-SPR refinement/search mode built around an explicit transactional move API. It should generate legal prune/regraft candidates without changing the tree, evaluate candidates through reversible topology changes, fully re-evaluate the strongest candidates, accept at most one move per round, then update likelihood, branch lengths, checkpoints, candidate-tree state, and diagnostics exactly as the production NNI search does.</p>
+<div class="decision"><strong>Recommended first release.</strong> Support unrooted, binary, single-tree likelihood analyses; bounded-radius SPR; serial candidate evaluation; one accepted move per round; and full branch reoptimization after acceptance. Add partitioned/supertree and specialized tree types only as explicit follow-on work.</div>
+
+<h2>2. Goals, non-goals, and success criteria</h2>
+<h3>2.1 Goals</h3>
+<ul>
+  <li>Provide an optional ML-SPR topology search/refinement facility that is correct, reproducible, and measurable.</li>
+  <li>Use IQ-TREE's own tree, neighbor, likelihood, optimization, constraint, and checkpoint infrastructure.</li>
+  <li>Guarantee that a rejected candidate leaves the topology, branch lengths, caches, and score unchanged.</li>
+  <li>Guarantee that every accepted move improves a freshly computed likelihood by more than the configured epsilon.</li>
+  <li>Expose bounded computational cost through radius, candidate-cap, round-cap, and time controls.</li>
+  <li>Leave existing NNI-only behavior identical when SPR is disabled.</li>
+</ul>
+<h3>2.2 Non-goals for the first release</h3>
+<ul>
+  <li>Unbounded global SPR enumeration on large trees.</li>
+  <li>Batch application of multiple allegedly non-conflicting SPR moves.</li>
+  <li>Parallel candidate scoring before serial correctness and cache discipline are demonstrated.</li>
+  <li>Automatic support for every specialized tree subclass.</li>
+  <li>Replacing IQ-TREE's existing stochastic NNI/IQP search by default.</li>
+</ul>
+<h3>2.3 Definition of done</h3>
+<ol>
+  <li>Core supported inputs complete a bounded SPR run without topology or cache corruption.</li>
+  <li>For every accepted move, independently recomputing likelihood after the move verifies a gain greater than epsilon.</li>
+  <li>For every rejected candidate, apply/rollback restores the exact Newick topology and branch-length vector.</li>
+  <li>Existing regression tests pass unchanged with SPR disabled.</li>
+  <li>New tests cover legal/illegal moves, candidate generation, rollback, score monotonicity, constraints, resume, and deterministic output.</li>
+  <li>Report files and terminal output state parameters, candidate counts, accepted moves, likelihood gain, and timing.</li>
+</ol>
+
+<h2>3. Current repository map and implications</h2>
+<table>
+<tr><th>Area</th><th>Files</th><th>Role in this project</th></tr>
+<tr><td>Existing SPR prototype</td><td><code>tree/phylotree.h</code>, <code>tree/phylotree.cpp</code></td><td>Contains <code>SPRMove</code>, <code>SPRMoves</code>, <code>optimizeSPR*</code>, candidate assessment, and commented prune/regraft helpers. Use as a behavioral reference only.</td></tr>
+<tr><td>Production topology search</td><td><code>tree/iqtree.h</code>, <code>tree/iqtree.cpp</code></td><td>Owns <code>doTreeSearch</code>, NNI evaluation, move application, score updates, candidate trees, perturbation, and search accounting. This should own the SPR search orchestrator.</td></tr>
+<tr><td>Base tree / likelihood</td><td><code>tree/phylotree.*</code>, <code>tree/phylonode.*</code>, <code>tree/node.*</code></td><td>Owns tree representation, neighbor links, partial likelihoods, branch optimization, and low-level topology mutation.</td></tr>
+<tr><td>Workflow entry point</td><td><code>main/phyloanalysis.cpp</code></td><td>Currently branches to the prototype when <code>params.tree_spr</code> is true. Replace with an integrated search/refinement call.</td></tr>
+<tr><td>Options</td><td><code>utils/tools.h</code>, <code>utils/tools.cpp</code></td><td>Add validated public parameters and defaults; retain <code>-spr</code> as an alias only if backward compatibility is wanted.</td></tr>
+<tr><td>Constraints</td><td><code>tree/constrainttree.*</code></td><td>NNI has compatibility checks. SPR needs an equivalent topology-level compatibility gate before a candidate is evaluated or accepted.</td></tr>
+<tr><td>Derived tree types</td><td><code>tree/phylosupertree*</code>, <code>tree/phylotreemixlen*</code>, <code>tree/iqtreemix*</code></td><td>Must be explicitly supported via overrides or rejected with a clear error; inherited pointer rewiring is unsafe by assumption.</td></tr>
+<tr><td>PLL reference</td><td><code>pll/searchAlgo.c</code></td><td>Contains separate SPR enumeration and rollback patterns. Study it; do not directly combine representations.</td></tr>
+</table>
+<div class="note"><strong>Important finding.</strong> The legacy top-level method sets radius to 10, limits stored moves to 20, loops up to 100 rounds, and invokes the legacy traversal. These values must become parameters and must not define algorithmic correctness.</div>
+
+<h2>4. Architecture and move semantics</h2>
+<h3>4.1 Tree model assumptions for version 1</h3>
+<ul>
+  <li>Tree is connected, unrooted, and strictly binary internally.</li>
+  <li>An SPR move cuts one directed parent/subtree edge. Suppressing its former internal attachment point joins its two remaining incident branches.</li>
+  <li>Regrafting subdivides a target edge, reconnects the suppressed internal node, and attaches the pruned subtree.</li>
+  <li>The target edge must be outside the pruned subtree. Moves that recreate the same topology are excluded.</li>
+  <li>Branch lengths may be initialized from split/merged local lengths during screening, then optimized before final acceptance.</li>
+</ul>
+<h3>4.2 Move-state contract</h3>
+<p>Replace the current pointer-only candidate structure with a value-like description plus a separate rollback state. A candidate must be valid before any mutation and should identify edges by stable endpoint/node IDs or safely scoped pointers.</p>
+<pre>SPRMove
+  prune_child, prune_parent       // directed cut edge
+  regraft_a, regraft_b            // target undirected edge
+  radius, screening_score, exact_score
+  candidate_id / generation round
+
+SPRRollback
+  original neighbor endpoints and lengths for all rewired edges
+  original root/direction state if applicable
+  changed-cache frontier or a conservative "clear all" marker
+  optional branch-length snapshot for exact candidate evaluation</pre>
+<p>Do not place transient neighbor iterators in a stored candidate unless mutation is impossible between generation and use. Iterators and pointers are appropriate only inside a single apply/evaluate/rollback transaction.</p>
+<h3>4.3 Low-level public/private API</h3>
+<table>
+<tr><th>API</th><th>Responsibility</th><th>Required invariant</th></tr>
+<tr><td><code>isLegalSPR(move)</code></td><td>Tests membership, non-identity, binary constraints, root conditions, and constraints.</td><td>Never mutates the tree.</td></tr>
+<tr><td><code>applySPR(move, rollback)</code></td><td>Rewires exactly one legal move and records all state required to undo it.</td><td>Produces a connected binary tree.</td></tr>
+<tr><td><code>rollbackSPR(rollback)</code></td><td>Restores pre-apply topology and branch lengths.</td><td>Restores exact prior representation.</td></tr>
+<tr><td><code>invalidateSPRPartials(...)</code></td><td>Invalidates all likelihood data affected by topology or branch-length changes.</td><td>No stale partial is used after mutation.</td></tr>
+<tr><td><code>scoreSPR(move, mode)</code></td><td>Applies, optimizes, scores, and rolls back unless explicitly asked to commit.</td><td>Leaves no mutation on a rejected/evaluated candidate.</td></tr>
+<tr><td><code>commitSPR(move)</code></td><td>Applies final move and optimization, updates score/state.</td><td>New <code>curScore</code> is exact.</td></tr>
+</table>
+
+<h2>5. Detailed phased implementation plan</h2>
+<h3>Phase 0 &mdash; Baseline, fixtures, and instrumentation</h3>
+<p><strong>Purpose:</strong> make later failures observable and distinguish algorithmic problems from existing build/test issues.</p>
+<ol>
+  <li>Build the exact fork and run the existing automated tests.</li>
+  <li>Identify the project test conventions under <code>test_scripts</code> and add a dedicated SPR fixture directory without changing unrelated tests.</li>
+  <li>Create small fixtures: 4&ndash;8 taxon trees for topology legality; 8&ndash;20 taxon alignments where NNI gets stuck but a known SPR move improves likelihood; and no-improvement controls.</li>
+  <li>Add a test helper that extracts canonical topology/Newick, edge count, taxon set, and branch-length vector before/after an operation.</li>
+  <li>Add a debug-only tree validator: connected traversal visits every node once; each neighbor link is reciprocal; no degree-two internal node remains after an applied move; leaf names/IDs are unchanged; expected edge count holds.</li>
+  <li>Run the existing <code>-spr</code> option on those fixtures and document results; do not use it as an oracle.</li>
+</ol>
+<p><strong>Exit criteria:</strong> baseline tests pass, fixtures are committed, and a failed rollback can be diagnosed from preserved topology/score output.</p>
+
+<h3>Phase 1 &mdash; Configuration and explicit algorithm policy</h3>
+<p><strong>Purpose:</strong> prevent hard-coded experimental behavior from leaking into the new design.</p>
+<ol>
+  <li>Add structured parameters to <code>Params</code> in <code>utils/tools.h</code>: enabled/mode, radius, top-K exact candidates, max rounds, likelihood epsilon, local optimization policy, and optional time budget.</li>
+  <li>Initialize defaults in <code>utils/tools.cpp</code>. Recommended conservative defaults: refine mode; radius 3&ndash;5; top K 10&ndash;20; one accepted move/round; epsilon equal to the tree-search tolerance; a finite round limit.</li>
+  <li>Parse documented long options, validate ranges, and reject incompatible combinations. Preserve <code>-spr</code> as a compatibility alias mapped to <code>--spr-mode refine</code>, or deprecate it with a warning.</li>
+  <li>Define search modes precisely: <code>refine</code> invokes SPR after existing tree search; <code>search</code> may invoke it at configured points in the stochastic loop; do not expose a mode before it is implemented.</li>
+  <li>Add a configuration report block showing all effective values and a deterministic random seed if random candidate sampling is later added.</li>
+</ol>
+<p><strong>Exit criteria:</strong> no topology code reads hidden hard-coded radius/candidate/round limits.</p>
+
+<h3>Phase 2 &mdash; Transactional topology mutation</h3>
+<p><strong>Purpose:</strong> make all SPR operations reversible and independently testable before likelihood is involved.</p>
+<ol>
+  <li>Read the existing neighbor-update methods and define one canonical way to replace each endpoint. Avoid ad hoc vector edits in multiple call sites.</li>
+  <li>Implement <code>applySPR</code> to: validate endpoints; save original reciprocal neighbor objects and lengths; suppress the prune parent; split target edge; and reconnect the pruned subtree.</li>
+  <li>Implement <code>rollbackSPR</code> only from recorded state; it must not infer old topology from the currently mutated tree.</li>
+  <li>For every changed edge, preserve both directional branch lengths. Ensure split lengths are explicit parameters rather than hidden half-edge assumptions.</li>
+  <li>Handle root conventions deliberately. For version 1, reject rooted/nonreversible conditions if a valid generic update cannot be demonstrated.</li>
+  <li>Add tests over every legal move of small trees: apply; validate; rollback; validate; compare topology and all lengths to snapshots.</li>
+</ol>
+<p><strong>Exit criteria:</strong> thousands of randomized move/rollback iterations pass under assertions and sanitizers where available.</p>
+
+<h3>Phase 3 &mdash; Candidate generation</h3>
+<p><strong>Purpose:</strong> enumerate valid bounded SPR candidates without accidental topology changes.</p>
+<ol>
+  <li>Define a directed prune edge enumeration. Exclude leaf/root special cases only where mathematically or structurally necessary; pruning a leaf is normally a valid SPR case.</li>
+  <li>For each directed prune edge, mark or traverse the pruned component so target edges within it are excluded.</li>
+  <li>Run a breadth-first traversal from the former attachment frontier to find eligible target edges within <code>spr_radius</code>. Count distance consistently and document it.</li>
+  <li>Exclude the original attachment edge and moves that yield the same unrooted split set.</li>
+  <li>Deduplicate candidates. Canonicalize a move so traversing from the opposite direction cannot create a duplicate.</li>
+  <li>Apply constraint compatibility before expensive likelihood work. Initial safe strategy: temporarily apply then invoke an existing tree-level constraint check, roll back, and cache the boolean. Later replace with a split-level precheck if needed.</li>
+  <li>Add candidate count/topology uniqueness tests on known 5&ndash;10 taxon trees.</li>
+</ol>
+<p><strong>Exit criteria:</strong> candidate enumeration is deterministic; all candidates are legal and unique; no candidates leak across the pruned component.</p>
+
+<h3>Phase 4 &mdash; Likelihood-cache and branch-length correctness</h3>
+<p><strong>Purpose:</strong> score a candidate safely.</p>
+<ol>
+  <li>Start with the conservative correctness implementation: after every temporary move, call the existing full partial-likelihood invalidation routine, optimize selected local branches, calculate likelihood, then roll back and invalidate again.</li>
+  <li>Verify score symmetry: original score before evaluation equals original score after rollback within numeric tolerance.</li>
+  <li>Define screening optimization. Initial option: optimize the new attachment branch and the split target edges, then calculate likelihood. Do not claim exactness for this score.</li>
+  <li>Define exact optimization. Apply a shortlist candidate, invoke existing branch optimization sufficiently broadly (initially all branches), then compute likelihood from the normal exact path.</li>
+  <li>Record branch lengths from temporary exact evaluation only inside rollback state. Do not retain cache pointers or partial-likelihood arrays in move records.</li>
+  <li>Once correct, profile cache clearing. Optimize only affected partials only when equivalence to full clearing is proven with tests.</li>
+</ol>
+<p><strong>Exit criteria:</strong> full recomputation agrees with every exact candidate score; rollback score agrees with pre-move score.</p>
+
+<h3>Phase 5 &mdash; Selection and search loop</h3>
+<p><strong>Purpose:</strong> turn candidates into a monotone local-search algorithm.</p>
+<ol>
+  <li>Generate candidates from the current committed tree.</li>
+  <li>Score candidates using the screening policy; retain a bounded priority list of the best K.</li>
+  <li>Exactly evaluate shortlist candidates, always rolling back after evaluation.</li>
+  <li>Select the best candidate with exact score greater than <code>curScore + epsilon</code>.</li>
+  <li>Apply and commit that one candidate; optimize required branches; calculate the exact final score; assert final score is at least the selected score minus permitted numerical tolerance.</li>
+  <li>Update <code>curScore</code>, best score/tree state, and instrumentation.</li>
+  <li>Repeat until no improving move, maximum rounds, time budget, or user interruption.</li>
+  <li>Initially do not apply multiple candidates in a round. SPR neighborhoods overlap broadly, so NNI-style compatibility rules are insufficient without more work.</li>
+</ol>
+<p><strong>Exit criteria:</strong> every committed round is strictly likelihood-improving and final output is a local optimum within the configured bounded SPR neighborhood.</p>
+
+<h3>Phase 6 &mdash; IQTree integration</h3>
+<p><strong>Purpose:</strong> make SPR a first-class participant in the application workflow rather than a side call.</p>
+<ol>
+  <li>Introduce a virtual/overridable orchestration API in <code>IQTree</code>, such as <code>doSPRSearch(const SPRSearchConfig&amp;)</code>, while placing low-level mutation in <code>PhyloTree</code>.</li>
+  <li>Follow the NNI search's ownership rules for <code>curScore</code>, best-tree status, candidate sets, model/branch optimization, and output statistics.</li>
+  <li>Update <code>main/phyloanalysis.cpp</code> to invoke the integrated API instead of calling the prototype directly.</li>
+  <li>Decide exactly where refinement runs: recommended first release is after the normal tree search completes and before final reporting/checkpoint output.</li>
+  <li>Ensure candidate-tree/checkpoint serialization sees only committed trees. Temporary scored candidates must never leak into resumable state.</li>
+  <li>Verify interruption and checkpoint timing: checkpoint only at round boundaries after a committed state.</li>
+  <li>Set and report final score through the same paths used by NNI; eliminate comparisons against stale <code>getCurScore()</code>.</li>
+</ol>
+<p><strong>Exit criteria:</strong> an SPR-refined run has correct final score, candidate-tree state, checkpoint/resume behavior, and report output.</p>
+
+<h3>Phase 7 &mdash; Derived tree types and compatibility gates</h3>
+<p><strong>Purpose:</strong> avoid silent corruption for representations whose topology changes must be propagated to linked structures.</p>
+<table>
+<tr><th>Variant</th><th>Initial release policy</th><th>Follow-on work</th></tr>
+<tr><td>Ordinary <code>IQTree</code>/<code>PhyloTree</code></td><td>Supported.</td><td>Performance improvements.</td></tr>
+<tr><td>Partitioned/supertree</td><td>Reject with a direct message unless a dedicated override is implemented.</td><td>Mirror the propagation/linked-neighbor logic used by <code>PhyloSuperTree::doNNI</code>; validate every partition.</td></tr>
+<tr><td>Unlinked partitions</td><td>Reject or run independently only if that is a documented user-level meaning.</td><td>Implement per-partition orchestration and score aggregation.</td></tr>
+<tr><td>Mixture branch lengths</td><td>Reject initially.</td><td>Define per-mixture branch-length snapshots and optimization.</td></tr>
+<tr><td>Rooted/nonreversible</td><td>Reject initially unless root-direction recomputation is proven.</td><td>Implement and test directional-cache/root updates.</td></tr>
+<tr><td>Constraints</td><td>Support only after legality check is tested.</td><td>Optimize prechecks based on split compatibility.</td></tr>
+</table>
+<p><strong>Exit criteria:</strong> every unsupported mode fails early and clearly; no inherited base-tree rewiring is used accidentally.</p>
+
+<h3>Phase 8 &mdash; User interface, diagnostics, and documentation</h3>
+<ol>
+  <li>Add command reference and user-guide text: method, scope, cost, defaults, limitations, reproducibility, and examples.</li>
+  <li>Print a compact per-round progress line only at normal verbosity: round, candidates generated/screened/exact, selected distance, score gain, cumulative gain, elapsed time.</li>
+  <li>Write summary fields to the report: requested/effective options, number of accepted moves, evaluated candidates, final radius, stop reason, and timing.</li>
+  <li>Add a developer-only debug option to emit each candidate/commit/rollback topology for fixture diagnosis; keep it off in normal builds.</li>
+  <li>Document that increasing radius can sharply increase work and that SPR is optional refinement, not a universally better replacement for IQ-TREE's established search.</li>
+</ol>
+
+<h3>Phase 9 &mdash; Validation, regression, and performance</h3>
+<h4>Correctness test matrix</h4>
+<ul>
+  <li>Move legality: target inside pruned subtree, target equals source, leaf/internal cases, near-root cases, and binary invariants.</li>
+  <li>Transactional integrity: topology, edge set, lengths, likelihood, and taxon IDs restored after each rejected candidate.</li>
+  <li>Score monotonicity: exact final score after every accepted move.</li>
+  <li>Candidate completeness within radius on hand-enumerated small trees.</li>
+  <li>Constraints: candidates that violate a constraint are never committed.</li>
+  <li>Determinism: same input/options/seed produces same sequence and final tree.</li>
+  <li>Checkpoint/resume: interrupted at a committed round boundary produces the same final result as uninterrupted execution.</li>
+  <li>Regression: NNI-only runs remain unchanged when SPR options are absent.</li>
+</ul>
+<h4>Performance protocol</h4>
+<ol>
+  <li>Benchmark small, medium, and large alignments under NNI-only, NNI+SPR radius 3, and NNI+SPR radius 5.</li>
+  <li>Record wall and CPU time, peak memory, candidates generated/screened/exact, full cache clears, exact likelihood evaluations, accepted moves, and final likelihood.</li>
+  <li>Plot likelihood gain against added runtime; tune default radius and K from observed cost rather than intuition.</li>
+  <li>Only after baseline profiling, consider screening bounds, partial cache invalidation, candidate sampling, or parallel exact scoring.</li>
+</ol>
+
+<h2>6. Proposed work breakdown and deliverables</h2>
+<table>
+<tr><th>Milestone</th><th>Primary deliverables</th><th>Review gate</th></tr>
+<tr><td>M1: Baseline</td><td>Fixtures, validator, baseline outputs, documented prototype behavior.</td><td>Can detect and reproduce mutation failures.</td></tr>
+<tr><td>M2: Safe moves</td><td><code>SPRMove</code>/<code>SPRRollback</code>, apply/rollback APIs, randomized structural tests.</td><td>Rollback exactness is proven.</td></tr>
+<tr><td>M3: Candidate/scoring</td><td>Bounded generator, legality/constraint checks, screening and exact evaluation.</td><td>Exact scores and rollback scores agree.</td></tr>
+<tr><td>M4: Search integration</td><td>IQTree orchestration, score/checkpoint/candidate-tree integration, CLI options.</td><td>End-to-end refine mode is stable.</td></tr>
+<tr><td>M5: Release quality</td><td>Docs, reports, regression/performance results, unsupported-mode guards.</td><td>Defaults and supported scope approved.</td></tr>
+<tr><td>M6: Extensions</td><td>Supertree/partition/mixlen overrides, optional parallelism or advanced heuristics.</td><td>Each variant has dedicated tests.</td></tr>
+</table>
+
+<h2>7. Risks and mitigations</h2>
+<table>
+<tr><th>Risk</th><th>Why it matters</th><th>Mitigation</th></tr>
+<tr><td>Stale partial likelihoods</td><td>Can silently choose wrong topologies.</td><td>Begin with full invalidation, exact-score assertions, and only later optimize invalidation.</td></tr>
+<tr><td>Incomplete rollback</td><td>Corrupts later candidates and makes failures non-local.</td><td>Dedicated rollback state; structural snapshots; randomized apply/rollback tests.</td></tr>
+<tr><td>Quadratic neighborhood growth</td><td>Can make search impractical at scale.</td><td>Bounded radius, shortlist K, time/round limits, and measured defaults.</td></tr>
+<tr><td>Derived type corruption</td><td>Supertrees have linked structures not updated by base rewiring.</td><td>Explicit feature guards; dedicated overrides only after design/test work.</td></tr>
+<tr><td>Approximate score false positives</td><td>Can waste expensive work or cause erroneous commits.</td><td>Use approximate scores only for ranking; commit solely on exact re-evaluation.</td></tr>
+<tr><td>Regression to established NNI behavior</td><td>Core user workflows are sensitive to changes.</td><td>Keep feature opt-in; run NNI regression suite with SPR disabled.</td></tr>
+</table>
+
+<h2>8. Suggested initial command-line contract</h2>
+<pre>iqtree3 -s alignment.phy --spr-mode refine
+iqtree3 -s alignment.phy --spr-mode refine --spr-radius 4 --spr-candidates 16
+iqtree3 -s alignment.phy --spr-mode search --spr-radius 3 --spr-rounds 20
+
+# Compatibility alias, if retained:
+iqtree3 -s alignment.phy -spr</pre>
+<p>Suggested semantics: <code>refine</code> runs only after the ordinary search; <code>search</code> remains unavailable or explicitly experimental until integrated into perturbation/stochastic search. Options must be rejected, not ignored, for unsupported tree models or combinations.</p>
+
+<h2>9. Immediate next actions</h2>
+<ol>
+  <li>Create the baseline SPR fixture set and run the current <code>-spr</code> implementation on it.</li>
+  <li>Implement only the structural <code>applySPR</code>/<code>rollbackSPR</code> transaction and its tests.</li>
+  <li>Review that API before adding any likelihood or search-loop logic.</li>
+  <li>Implement bounded candidate generation and exhaustive small-tree tests.</li>
+  <li>Add conservative exact scoring, then integrate one-move-per-round refinement into <code>IQTree</code>.</li>
+</ol>
+<p class="small">This document intentionally prioritizes correctness and integration over early speed. In likelihood tree search, a fast topology move that leaves a stale partial likelihood or an incorrect rollback is more damaging than an expensive but verified move.</p>
+</body>
+</html>

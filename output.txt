@@ -1,0 +1,3 @@
+input tree : ((A,B),C):0;
+move       : prune 'C', regraft onto the pendant edge above 'B' (so they become siblings)
+result tree: (A,(B:-0.5000000000,C):-0.5);

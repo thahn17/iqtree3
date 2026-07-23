@@ -23,7 +23,7 @@ static __inline void cpuid(unsigned int op, int count,
                          unsigned int *eax, unsigned int *ebx,
                          unsigned int *ecx, unsigned int *edx)
 {
-#if defined(WIN32) || defined(WIN64)
+#if defined(_MSC_VER) && (defined(WIN32) || defined(WIN64))
 	__int32 regs[4];
 	__cpuid((int*)regs, (int)op);
 	*eax = regs[0];
