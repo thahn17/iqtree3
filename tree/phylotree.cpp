@@ -5052,6 +5052,12 @@ bool PhyloTree::isLegalSPR(const SPRMove &move) {
     // the target edge must lie entirely outside the pruned subtree
     if (isInPrunedSubtree(node2, node1, dad1) || isInPrunedSubtree(dad2, node1, dad1))
         return false;
+    // the target edge cannot be incident to the tree's root. `root` is an
+    // arbitrary leaf used only as a traversal anchor (see MTree::readTree),
+    // not a real attachment point; regrafting onto its pendant edge would
+    // rewire that bookkeeping leaf's own neighbor for no biological reason.
+    if (node2 == root || dad2 == root)
+        return false;
     return true;
 }
 

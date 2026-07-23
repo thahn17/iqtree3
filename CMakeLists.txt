@@ -1187,6 +1187,15 @@ if (BUILD_SPR_TOPOLOGY_TEST AND NOT BUILD_LIB)
         target_link_libraries(spr_topology_test -Wl,--end-group)
     endif()
 
+    # statically link the MinGW runtime (libgcc, libstdc++, libwinpthread,
+    # libgomp) so this executable has no dependency on DLLs from the
+    # compiler's own bin/ directory (e.g. libgomp-1.dll) at run time -- it
+    # can be run, copied, or double-clicked from anywhere without needing
+    # that directory on PATH.
+    if ((GCC OR CLANG) AND WIN32)
+        target_link_libraries(spr_topology_test -static)
+    endif()
+
     target_link_libraries(spr_topology_test ${PLATFORM_LIB} ${STD_LIB} ${THREAD_LIB} ${ATOMIC_LIB})
 endif()
 

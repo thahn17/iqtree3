@@ -1,3 +1,4 @@
-input tree : ((A,B),C):0;
-move       : prune 'C', regraft onto the pendant edge above 'B' (so they become siblings)
-result tree: (A,(B:-0.5000000000,C):-0.5);
+input tree  : ((A,B),((C,D),E)):0.0;
+prune edge  : above {C,D} (internal edge)
+regraft edge: above {B} (pendant edge)
+result tree : ((A,(B:-0.5,(C,D)):-0.5),E:-2.0):0.0;
