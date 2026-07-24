@@ -207,12 +207,43 @@ Tree argument convention (used by every command that takes a tree):
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10
 
 
+6) Greedy randomized SPR hill-climbing search with a decaying radius
+------------------------------------------------------------------------
+    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay>
+
+    Identical to --hillclimb (command 5 above; same input files, same
+    algorithm, same output, same exit codes) except the regraft search
+    radius is no longer fixed at <radius> for every step. Instead, step i
+    (0-indexed) uses:
+        step radius = max(1, ceil(<radius> - <decay> * i))
+    i.e. it starts at <radius> and shrinks by <decay> each step, rounding
+    up so the radius is always a whole number of hops, and never dropping
+    below 1. <decay> is a floating-point number and need not be an integer
+    (e.g. 0.5 shrinks the radius by 1 hop every other step).
+
+    The idea: search widely early on, while the BioNJ start tree is
+    furthest from optimal, then narrow to cheaper, more local moves in
+    later steps as the tree is expected to be closer to a local optimum.
+    <decay> = 0 reproduces plain --hillclimb exactly (this is also what
+    --hillclimb itself does internally -- --hillclimb-decay only adds a
+    thin CLI layer on top of the same runHillClimb() implementation, it is
+    not a separate search).
+
+    When a step's shrunken radius yields zero legal graft candidates, that
+    step is skipped exactly like a zero-candidate step in plain
+    --hillclimb (see command 5, algorithm step 2 and its "stop early"
+    paragraph) -- it does not end the search early by itself.
+
+    Example:
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2
+
+
 Generating input data with AliSim
 ----------------------------------
---hillclimb needs the FULL iqtree3 executable (a separate CMake target)
-to generate its input, since AliSim lives in main/alisim.cpp, which
-spr_topology_test deliberately does not link (see the header comment in
-tree/spr_topology_test.cpp for why). Build it once:
+--hillclimb and --hillclimb-decay need the FULL iqtree3 executable (a
+separate CMake target) to generate their input, since AliSim lives in
+main/alisim.cpp, which spr_topology_test deliberately does not link (see
+the header comment in tree/spr_topology_test.cpp for why). Build it once:
     cmake --build build --target iqtree3
 
 Then generate a tree+alignment pair, e.g. 15 taxa, Yule-Harding random

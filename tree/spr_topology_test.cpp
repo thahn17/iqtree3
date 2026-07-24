@@ -20,6 +20,7 @@
 #include "model/modelfactory.h"
 #include "utils/timeutil.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -549,8 +550,9 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     Builds a BioNJ tree from that alignment as the starting "estimate"
     tree, then repeats up to maxSteps times:
       1. pick a uniformly random prune edge
-      2. enumerate every legal regraft candidate within `radius` hops
-         (findGraftPositions)
+      2. enumerate every legal regraft candidate within the step's current
+         radius (findGraftPositions) -- see radiusDecayPerStep below for how
+         that can shrink from `radius` as steps progress
       3. score every candidate by applySPR + computeLikelihood +
          rollbackSPR on the SAME tree object -- no candidate ever gets its
          own copy of the tree
@@ -563,6 +565,13 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     candidates within the radius, or if the tree runs out of degree-3
     nodes to prune from (only possible on very small trees).
 
+    radiusDecayPerStep (default 0.0, i.e. constant radius -- the original
+    --hillclimb behavior) lets the radius shrink as the search progresses:
+    step i (0-indexed) uses radius = max(1, ceil(radius - radiusDecayPerStep
+    * i)) instead of the fixed `radius` for every step. The idea is to
+    search wide early on, when the BioNJ start tree is furthest from
+    optimal, then narrow to cheaper, more local moves later.
+
     On completion, prints the Robinson-Foulds distance between the
     original AliSim tree and the final tree to the terminal, and writes
     both trees plus the RF distance to output.txt (repo root, overwritten
@@ -570,7 +579,7 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
 
     @return 0 on success, 1 if the tree/alignment couldn't be read
  */
-int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
+int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double radiusDecayPerStep = 0.0) {
     // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
     string alnFile = trueTreeArg;
     const string suffix = ".treefile";
@@ -602,6 +611,15 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
     // (<prefix>.mldist, <prefix>.bionj) as part of how it builds the tree
     params.out_prefix = (char*) "spr_hillclimb_tmp";
 
+    // the alignment/distance/BioNJ/model setup below goes through several
+    // library code paths (Alignment, computeDist, computeBioNJ, ModelFactory)
+    // that print their own progress noise (format detection, composition
+    // test, distance matrix, RapidNJ progress, ...) unconditionally on cout;
+    // none of it is useful for this test tool, so silence cout for the
+    // duration of the setup and restore it before printing our own summary
+    ostringstream suppressedSetupOutput;
+    streambuf *realCoutBuf = cout.rdbuf(suppressedSetupOutput.rdbuf());
+
     InputType intype;
     Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
 
@@ -629,9 +647,29 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
 
     double curScore = tree.computeLikelihood();
 
-    cout << "AliSim true tree: " << trueTreeNewick << endl;
+    // logL of the original AliSim tree (topology and branch lengths exactly
+    // as simulated) against this same alignment/model, purely as a
+    // reference point for how the final hill-climbed tree's logL compares --
+    // trueTree gets its own ModelFactory since a PhyloTree's model holds a
+    // pointer back to that exact tree, so it can't be shared with `tree`
+    trueTree.setParams(&params);
+    trueTree.setAlignment(aln);
+    trueTree.setNumThreads(1);
+    trueTree.setLikelihoodKernel(LK_SSE2);
+    ModelsBlock *trueTreeModelsBlock = readModelsDefinition(params);
+    trueTree.setModelFactory(new ModelFactory(params, modelName, &trueTree, trueTreeModelsBlock));
+    delete trueTreeModelsBlock;
+    trueTree.setModel(trueTree.getModelFactory()->model);
+    trueTree.setRate(trueTree.getModelFactory()->site_rate);
+    trueTree.initializeAllPartialLh();
+    double trueTreeLogl = trueTree.computeLikelihood();
+
+    cout.rdbuf(realCoutBuf);
+
     cout << "BioNJ start tree: " << newickOf(tree) << " (logL = " << curScore << ")" << endl;
     cout << "radius          : " << radius << endl;
+    if (radiusDecayPerStep > 0.0)
+        cout << "radius decay    : " << radiusDecayPerStep << " per step (min 1)" << endl;
     cout << "max steps       : " << maxSteps << endl;
 
     // time(nullptr) alone has only 1-second resolution, which repeats the
@@ -642,6 +680,12 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
 
     int step = 0;
     for (; step < maxSteps; step++) {
+        // radiusDecayPerStep == 0.0 keeps this equal to `radius` for every
+        // step, i.e. identical to the original constant-radius --hillclimb
+        int stepRadius = radiusDecayPerStep > 0.0
+            ? max(1, (int) ceil(radius - radiusDecayPerStep * step))
+            : radius;
+
         PhyloNode *pruneNode, *pruneDad;
         if (!pickRandomPruneEdge(tree, pruneNode, pruneDad)) {
             cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
@@ -649,10 +693,11 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
             break;
         }
 
-        vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, radius);
+        vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, stepRadius);
         if (candidates.empty()) {
-            cout << "step " << (step + 1) << ": prune {" << describeEdgeCompact(pruneNode, pruneDad) << "}"
-                 << " -- no legal graft candidates within radius " << radius << "; skipping." << endl;
+            cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                 << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                 << " -- no legal graft candidates; skipping." << endl;
             continue;
         }
 
@@ -704,9 +749,11 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
         resetLikelihoodBuffers(tree);
 
         bool improved = bestScore > curScore;
-        cout << "step " << (step + 1) << ": prune {" << describeEdgeCompact(pruneNode, pruneDad) << "}"
+        cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+             << describeEdgeCompact(pruneNode, pruneDad) << "}"
              << " -> graft {" << describeEdgeCompact(bestCandidate.node, bestCandidate.dad) << "}"
-             << " (r=" << bestCandidate.radius << "), logL " << bestScore << " (cur " << curScore << ")"
+             << " (distance " << bestCandidate.radius << ")"
+             << ", logL " << bestScore << " (cur " << curScore << ")"
              << (improved ? " [kept]" : " [reverted]") << endl;
 
         if (improved) {
@@ -720,6 +767,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
     cout << endl << "=== finished after " << step << " step(s) ===" << endl;
     string finalTreeNewick = newickOf(tree);
     cout << "final tree (logL = " << curScore << "): " << finalTreeNewick << endl;
+    cout << "AliSim true tree logL: " << trueTreeLogl << endl;
 
     stringstream finalTreeStream;
     finalTreeStream << finalTreeNewick;
@@ -880,6 +928,11 @@ void printUsage(const char *prog) {
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
     cerr << "      output.txt." << endl;
     cerr << endl;
+    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay>" << endl;
+    cerr << "      same search as --hillclimb, but the radius shrinks by <decay> each step" << endl;
+    cerr << "      (step i uses radius = max(1, ceil(<radius> - <decay> * i)) instead of a" << endl;
+    cerr << "      fixed <radius> for every step)." << endl;
+    cerr << endl;
     cerr << "  In the move/list-grafts forms, an edge is a comma-separated leaf name list:" << endl;
     cerr << "    a single leaf, e.g. C         -> that leaf's own pendant edge" << endl;
     cerr << "    two or more leaves, e.g. B,D  -> the internal edge above their MRCA" << endl;
@@ -891,6 +944,7 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --list-grafts tree.nwk C 3         (list candidates within 3 hops of C)" << endl;
     cerr << "    " << prog << " --likelihood tree.nwk aln.fasta    (evaluate likelihood)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20      (hill-climb search)" << endl;
+    cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5  (hill-climb, shrinking radius)" << endl;
     cerr << endl;
     cerr << "  Full reference: tree/spr_topology_test_usage.txt" << endl;
 }
@@ -905,6 +959,8 @@ int main(int argc, char **argv) {
         return runListGrafts(argv[2], argv[3], atoi(argv[4]));
     if (argc == 5 && string(argv[1]) == "--hillclimb")
         return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]));
+    if (argc == 6 && string(argv[1]) == "--hillclimb-decay")
+        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]));
     if (argc == 4 && string(argv[1]) == "--likelihood")
         return runLikelihood(argv[2], argv[3]);
     if (argc == 4)
