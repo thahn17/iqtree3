@@ -195,6 +195,28 @@ string describeEdge(PhyloNode *node, PhyloNode *dad) {
 }
 
 /**
+    same leaf set as describeEdge, but capped at maxNames entries followed
+    by "+K more" -- for compact one-line-per-step progress output where the
+    full comma-joined list (potentially every leaf in a large clade) would
+    be unreadable. Not meant to be fed back in as an edge spec argument;
+    use describeEdge for that.
+ */
+string describeEdgeCompact(PhyloNode *node, PhyloNode *dad, size_t maxNames = 4) {
+    vector<string> names;
+    collectLeafNames(node, dad, names);
+    string result;
+    size_t shown = min(names.size(), maxNames);
+    for (size_t i = 0; i < shown; i++) {
+        if (i)
+            result += ",";
+        result += names[i];
+    }
+    if (names.size() > shown)
+        result += ",+" + to_string(names.size() - shown) + " more";
+    return result;
+}
+
+/**
     a single legal SPR regraft target: the edge (node,dad), and how many
     hops away from the prune point it lies
  */
@@ -620,20 +642,17 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
 
     int step = 0;
     for (; step < maxSteps; step++) {
-        cout << endl << "-- step " << (step + 1) << " --" << endl;
-
         PhyloNode *pruneNode, *pruneDad;
         if (!pickRandomPruneEdge(tree, pruneNode, pruneDad)) {
-            cout << "no degree-3 node left to prune from; stopping." << endl;
+            cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
             step++;
             break;
         }
-        cout << "random prune edge: above {" << describeEdge(pruneNode, pruneDad) << "}" << endl;
 
         vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, radius);
         if (candidates.empty()) {
-            cout << "no legal graft candidates within radius " << radius
-                 << " for this prune edge; keeping current tree and moving to next step." << endl;
+            cout << "step " << (step + 1) << ": prune {" << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                 << " -- no legal graft candidates within radius " << radius << "; skipping." << endl;
             continue;
         }
 
@@ -667,12 +686,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
             }
         }
 
-        cout << "best candidate: above {" << describeEdge(bestCandidate.node, bestCandidate.dad) << "}"
-             << " (radius " << bestCandidate.radius << "), logL = " << bestScore
-             << " (current logL = " << curScore << ")" << endl;
-
-        // apply the winning candidate for real, once, to print the
-        // resulting tree and decide whether to keep it
+        // apply the winning candidate for real, once, to decide whether to
+        // keep it
         SPRMove bestMove;
         bestMove.prune_node = pruneNode;
         bestMove.prune_dad = pruneDad;
@@ -687,14 +702,16 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
         SPRRollback bestRollback;
         tree.applySPR(bestMove, bestRollback);
         resetLikelihoodBuffers(tree);
-        cout << "candidate tree: " << newickOf(tree) << endl;
 
-        if (bestScore > curScore) {
-            cout << "improved (logL " << curScore << " -> " << bestScore << "); keeping this move." << endl;
+        bool improved = bestScore > curScore;
+        cout << "step " << (step + 1) << ": prune {" << describeEdgeCompact(pruneNode, pruneDad) << "}"
+             << " -> graft {" << describeEdgeCompact(bestCandidate.node, bestCandidate.dad) << "}"
+             << " (r=" << bestCandidate.radius << "), logL " << bestScore << " (cur " << curScore << ")"
+             << (improved ? " [kept]" : " [reverted]") << endl;
+
+        if (improved) {
             curScore = bestScore;
         } else {
-            cout << "no improvement within radius " << radius
-                 << "; rolling back and moving to next step." << endl;
             tree.rollbackSPR(bestRollback);
             resetLikelihoodBuffers(tree);
         }
