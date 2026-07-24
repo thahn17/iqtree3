@@ -1,0 +1,257 @@
+spr_topology_test -- command reference
+=======================================
+
+Standalone test/exploration executable for the modern SPR (subtree pruning
+and regrafting) API declared in tree/phylotree.h and implemented in
+tree/phylotree.cpp (isLegalSPR / applySPR / rollbackSPR). Source:
+tree/spr_topology_test.cpp. Build target: spr_topology_test (see
+CMakeLists.txt). It does not link the `main` library and never runs a real
+IQ-TREE analysis pipeline, so most commands need no alignment or model --
+the exception is the likelihood command below, which does load a real
+alignment to actually evaluate the tree.
+
+
+Running these commands in a Windows terminal
+----------------------------------------------
+Every path in this file uses forward slashes (build/spr_topology_test.exe),
+not backslashes, run from the repo root (c:/Users/tinst/Desktop/iqtree3).
+That's deliberate, not a typo: forward slashes work correctly as path
+separators in all three common Windows terminals (PowerShell, cmd.exe, and
+Git Bash / MSYS2 bash), so examples written this way work everywhere
+unmodified.
+
+Backslash paths (build\spr_topology_test.exe) work in PowerShell and
+cmd.exe, but NOT in Git Bash / MSYS2 bash -- there, backslash is the
+shell's own escape character, so build\spr_topology_test.exe is read as
+"build" + an escaped "s" + "pr_topology_test.exe", which silently merges
+into buildspr_topology_test.exe (no separator at all) and then fails with
+a file-not-found error. If you're in Git Bash and see that kind of error
+on a path that looks otherwise correct, this is almost always why --
+switch the backslashes in whatever you typed to forward slashes.
+
+A few other things that trip people up:
+
+- cd to the repo root first (or adjust the paths below to match wherever
+  you actually are): cd c:/Users/tinst/Desktop/iqtree3
+- Quoting differs by shell. The examples below (multi-leaf specs like
+  "B,D", and AliSim's -t "RANDOM{yh/15}") use plain double quotes, which
+  work as-is in PowerShell, cmd.exe, and Git Bash for these examples.
+- To check whether the last command succeeded: PowerShell uses
+  $LASTEXITCODE, cmd.exe uses %ERRORLEVEL%, bash uses $? -- useful since
+  several commands here use the exit code to mean something specific
+  (e.g. --list-grafts returns 0 even when it finds zero candidates).
+  Example (PowerShell): run a command, then type `echo $LASTEXITCODE`.
+- If you built via the MSYS2/MinGW toolchain (see the main project docs),
+  that PATH setup is only needed for *building*. Both build/iqtree3.exe
+  and build/spr_topology_test.exe are statically linked, so *running*
+  them needs no special PATH -- a plain PowerShell, cmd.exe, or Git Bash
+  window is enough.
+
+Build (from repo root, after putting MSYS2's mingw64 first on PATH):
+    cmake --build build --target spr_topology_test
+
+The compiled executable is build/spr_topology_test.exe -- it is NOT put on
+PATH or installed anywhere, so every command below must be run either as
+build/spr_topology_test.exe (from the repo root) or ./spr_topology_test.exe
+(from inside the build/ directory). Just typing "spr_topology_test" on its
+own, from a shell that doesn't have build/ on PATH, will fail with a
+"command not found"-style error.
+
+Edge spec convention (used by every command that takes an edge argument):
+    a comma-separated list of leaf names.
+      - one name, e.g. C          -> that leaf's own pendant edge
+      - two or more names, e.g. B,D -> the internal edge directly above
+        the MRCA (most recent common ancestor) of those leaves
+    Quote multi-name specs in the shell, e.g. "B,D", so the comma-separated
+    list arrives as a single argument.
+
+Tree argument convention (used by every command that takes a tree):
+    either a path to a Newick file, or a literal Newick string in quotes,
+    e.g. "((A:0.1,B:0.1):0.1,C:0.1,D:0.1);"
+
+
+1) Self-test
+-------------
+    build/spr_topology_test.exe
+
+    Runs the built-in regression test on a fixed hardcoded 6-taxon tree
+    (mirrors test_scripts/test_data/spr/six_taxa.start.tree): applies one
+    SPR move, checks the resulting adjacency/topology, rolls it back, and
+    checks the tree is byte-for-byte identical to the original. Prints
+    [PASS]/[FAIL] per check plus a final summary. Exit code 0 iff every
+    check passed.
+
+    No arguments; this is the default when no other mode matches.
+
+
+2) Apply one SPR move
+-----------------------
+    build/spr_topology_test.exe <tree> <prune-edge> <regraft-edge>
+
+    Prunes <prune-edge> and regrafts it onto <regraft-edge>, printing the
+    tree before and after. Does NOT roll back -- this is a one-shot "what
+    would this move do?" check. Exit code 0 if the move was legal and
+    applied, 1 if it was rejected (illegal) or the tree/edges couldn't be
+    read/resolved.
+
+    Examples:
+        build/spr_topology_test.exe tree.nwk C D
+        build/spr_topology_test.exe tree.nwk C "B,D"
+        build/spr_topology_test.exe tree.nwk "B,D" "E,F"
+
+
+3) List legal graft positions within a radius
+-----------------------------------------------
+    build/spr_topology_test.exe --list-grafts <tree> <prune-edge> <radius>
+
+    Prunes <prune-edge> and enumerates every distinct, legal regraft
+    target within <radius> tree-hops of the prune point (see
+    findGraftPositions in tree/spr_topology_test.cpp for exactly how
+    radius/legality/dedup are defined). Does not apply or mutate
+    anything -- pure enumeration. Prints one line per candidate: its
+    radius, its edge spec (in the same comma-separated leaf-list form you
+    could feed back into command 2 as a regraft-edge), and whether it's a
+    pendant or internal edge. Exit code 0 even if zero candidates are
+    found (that's a valid, successful result, not an error); 1 only on a
+    genuine input error (bad tree, unknown leaf name, etc).
+
+    Example:
+        build/spr_topology_test.exe --list-grafts tree.nwk C 3
+
+
+4) Compute the likelihood of a tree against an alignment
+------------------------------------------------------------
+    build/spr_topology_test.exe --likelihood <tree> <alignment.fasta>
+
+    Loads a real DNA alignment and evaluates the log-likelihood of the
+    given tree topology and branch lengths against it, under a plain JC
+    substitution model with no rate heterogeneity (no branch-length or
+    model-parameter optimization is performed -- this reports the
+    likelihood of the tree exactly as given, not the best achievable
+    likelihood for that topology). Requires the alignment's sequence names
+    to match the tree's leaf names exactly. Prints alignment/model summary
+    plus the log-likelihood value; also prints IQ-TREE's normal alignment-
+    reading diagnostics (composition/gap warnings etc.) to stdout, which is
+    expected, not an error. Exit code 0 on success; 1 if the alignment file
+    couldn't be opened by this tool's own check; 2 if the tree/alignment
+    taxa don't match or the alignment is otherwise malformed (that check
+    lives in IQ-TREE's own PhyloTree::setAlignment/Alignment code, which
+    calls exit(2) directly on error rather than returning a status this
+    tool could remap to 1).
+
+    Examples (verified against real fixtures in test_scripts/test_data/):
+        build/spr_topology_test.exe --likelihood test_scripts/test_data/small.top.txt test_scripts/test_data/small.fa
+        build/spr_topology_test.exe --likelihood test_scripts/test_data/turtle.trees test_scripts/test_data/turtle.fa
+
+
+5) Greedy randomized SPR hill-climbing search
+------------------------------------------------
+    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps>
+
+    First, generate a ground-truth tree and a DNA alignment simulated along
+    it with the real iqtree3 binary's built-in AliSim feature (this needs
+    the full `iqtree3` executable, a separate build target from
+    `spr_topology_test` -- see "Generating input data" below):
+        iqtree3 --alisim sim -m GTR -t "RANDOM{yh/15}" --length 500 --seed 42 -af fasta
+
+    (--seed is required -- AliSim refuses to run without one, to keep runs
+    reproducible; any integer works, it just has to be present.)
+
+    This produces sim.treefile (the true tree) and sim.fa (the simulated
+    alignment). Feed the .treefile to --hillclimb; the alignment path is
+    derived automatically by replacing ".treefile" with ".fa" (AliSim's own
+    default output naming) -- there is no separate alignment argument.
+
+    Algorithm:
+      1. Build a BioNJ (neighbor-joining family) estimate tree directly
+         from the alignment's distance matrix -- this, not the true tree,
+         is the tree actually searched.
+      2. Repeat, up to <max-steps> times:
+           a. pick one uniformly random prune edge (a random degree-3 node,
+              then a random one of its 3 neighbors)
+           b. enumerate every distinct, legal regraft candidate within
+              <radius> hops of that prune point (same engine as
+              --list-grafts)
+           c. score every candidate on ONE tree object via
+              applySPR -> computeLikelihood -> rollbackSPR -- no candidate
+              ever gets its own copy of the tree
+           d. apply the single best-scoring candidate for real and print
+              the resulting tree
+           e. if its likelihood beats the current tree, keep the move;
+              otherwise roll it back
+         Either way, move on to the next step with whatever tree is
+         current (the improved one if the move was kept, the original one
+         if it was rolled back) -- a step with no improvement does not end
+         the search, it just tries a new random prune point next.
+      3. Stop early (before <max-steps>) only if a chosen prune edge has no
+         degree-3 node left to prune from at all (topology exhausted). A
+         step with zero legal candidates within the radius, or whose best
+         candidate doesn't improve on the current likelihood, still counts
+         as a completed step and the search continues to the next one.
+
+    On completion, prints the Robinson-Foulds (RF) distance between the
+    original AliSim tree and the final searched tree to the terminal, and
+    writes both trees plus the RF distance to output.txt in the current
+    directory (overwritten every run -- copy it elsewhere first if you want
+    to keep results from more than one run).
+
+    Also creates spr_hillclimb_tmp.* temporary files (a distance matrix and
+    a .bionj file) in the current directory as a side effect of BioNJ
+    construction; safe to delete afterward.
+
+    Exit code 0 on success (even if zero steps improved -- that is a valid,
+    successful search outcome); 1 if the alignment couldn't be found next
+    to the tree file.
+
+    Example:
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10
+
+
+Generating input data with AliSim
+----------------------------------
+--hillclimb needs the FULL iqtree3 executable (a separate CMake target)
+to generate its input, since AliSim lives in main/alisim.cpp, which
+spr_topology_test deliberately does not link (see the header comment in
+tree/spr_topology_test.cpp for why). Build it once:
+    cmake --build build --target iqtree3
+
+Then generate a tree+alignment pair, e.g. 15 taxa, Yule-Harding random
+tree, GTR model, 500bp:
+    build/iqtree3.exe --alisim sim -m GTR -t "RANDOM{yh/15}" --length 500 --seed 42 -af fasta -redo
+
+--seed is required (any integer; AliSim refuses to run without one so runs
+stay reproducible). -redo is only needed if sim.treefile/sim.fa already
+exist from a previous run in the same directory. By default, both generated files are stored in the main IQTREE3 folder.
+
+iqtree3.exe is statically linked (see CMakeLists.txt, same fix as
+spr_topology_test) so it runs standalone with no PATH setup needed, same
+as spr_topology_test.exe.
+
+
+Notes
+-----
+- Branch lengths print with 1 decimal place in all Newick output from this
+  tool (see newickOf() in tree/spr_topology_test.cpp); this is purely a
+  display setting for readability, not a precision limit on computation.
+- If your Newick input has no branch lengths at all, IQ-TREE's parser
+  defaults them to a -1.0 sentinel; applySPR's naive half-split of a
+  target edge's length will then propagate that sentinel into
+  negative-looking lengths in the output. Use a tree with real branch
+  lengths for a readable demo/result.
+- Grafting onto the edge incident to the tree's arbitrary root leaf (an
+  internal bookkeeping node, not a real taxon in the rooted-input case) is
+  always rejected as illegal by isLegalSPR, regardless of how you specify
+  it (single leaf name, or a multi-leaf spec that happens to resolve to
+  that same edge).
+- After every applySPR/rollbackSPR call that will be followed by a
+  computeLikelihood(), this tool calls resetLikelihoodBuffers() (a full
+  deleteAllPartialLh()+initializeAllPartialLh() pair), not just
+  clearAllPartialLH(). A plain clearAllPartialLH() only marks existing
+  per-edge buffers stale; it relies on IQ-TREE's incremental buffer-reuse
+  bookkeeping (PhyloTree::reorientPartialLh / mem_slots) to already know
+  which buffer belongs to which edge, an invariant NNI maintains (it only
+  ever touches edges adjacent to one already-evaluated branch) but SPR
+  does not (a regraft can jump to a distant, never-yet-traversed edge).
+  Skipping this crashes nondeterministically with either a "no buffer to
+  reorient" assertion or a buffer-aliasing assertion, depending on the
+  memory-saving mode in effect.

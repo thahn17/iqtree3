@@ -1106,6 +1106,18 @@ if (NOT BINARY32 AND NOT IQTREE_FLAGS MATCHES "novx")
     endif()
 endif()
 
+# statically link the MinGW runtime (libgcc, libstdc++, libwinpthread,
+# libgomp) so iqtree3.exe has no dependency on DLLs from the compiler's
+# own bin/ directory (e.g. libgomp-1.dll) at run time -- it can be run,
+# copied, or double-clicked from anywhere without needing that directory
+# on PATH. Same fix as the spr_topology_test target below.
+if ((GCC OR CLANG) AND WIN32)
+    target_link_libraries(iqtree3 -static)
+    if (USE_CMAPLE_AA STREQUAL "ON")
+        target_link_libraries(iqtree3-aa -static)
+    endif()
+endif()
+
 ##################################################################
 # standalone SPR topology test executable
 # Exercises isLegalSPR()/applySPR()/rollbackSPR() (see tree/phylotree.h

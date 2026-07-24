@@ -1,21 +1,27 @@
 /***************************************************************************
- *   Standalone topology-only test for the modern SPR API                *
+ *   Standalone test/exploration executable for the modern SPR API       *
  *   (isLegalSPR / applySPR / rollbackSPR, declared in phylotree.h).     *
  *                                                                        *
- *   This is a plain executable with its own main(); it never touches    *
- *   an alignment, a model, or the likelihood machinery, so it exercises *
- *   applySPR()/rollbackSPR() without running a real IQ-TREE analysis.   *
+ *   This is a plain executable with its own main() -- it does not run a *
+ *   real IQ-TREE analysis pipeline. Most commands are topology-only and *
+ *   never touch an alignment or model; the exception is --likelihood,   *
+ *   which does load a real alignment to evaluate the tree.              *
  *   Build target: spr_topology_test (see root CMakeLists.txt).          *
+ *   Full command reference: tree/spr_topology_test_usage.txt.           *
  *                                                                        *
- *   The hardcoded start tree mirrors                                    *
+ *   The self-test's hardcoded start tree mirrors                        *
  *   test_scripts/test_data/spr/six_taxa.start.tree so the fixture file  *
  *   and this test describe the same topology; the test does not read    *
  *   the file itself, to stay runnable from any working directory.       *
  ***************************************************************************/
 
 #include "phylotree.h"
+#include "alignment/alignment.h"
+#include "model/modelfactory.h"
+#include "utils/timeutil.h"
 #include <algorithm>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <queue>
@@ -263,6 +269,58 @@ vector<GraftCandidate> findGraftPositions(PhyloTree &tree, PhyloNode *pruneNode,
     return legalCandidates;
 }
 
+/**
+    collect every degree-3 node in the tree (every node that could serve as
+    a prune_dad -- see isLegalSPR's degree check), by a plain DFS from
+    `node`.
+ */
+void collectDegree3Nodes(PhyloNode *node, PhyloNode *dad, vector<PhyloNode*> &nodes) {
+    if (node->degree() == 3)
+        nodes.push_back(node);
+    FOR_NEIGHBOR_IT(node, dad, it)
+        collectDegree3Nodes((PhyloNode*) (*it)->node, node, nodes);
+}
+
+/**
+    pick a uniformly random prune edge: a uniformly random degree-3 node in
+    the tree, then a uniformly random one of its 3 neighbors to prune away.
+    Requires init_random() to already have been called once.
+    @return false if the tree has no degree-3 node at all (outNode/outDad
+    left untouched)
+ */
+bool pickRandomPruneEdge(PhyloTree &tree, PhyloNode* &outNode, PhyloNode* &outDad) {
+    vector<PhyloNode*> degree3Nodes;
+    collectDegree3Nodes((PhyloNode*) tree.root, nullptr, degree3Nodes);
+    if (degree3Nodes.empty())
+        return false;
+    outDad = degree3Nodes[random_int((int) degree3Nodes.size())];
+    outNode = (PhyloNode*) outDad->neighbors[random_int(3)]->node;
+    return true;
+}
+
+/**
+    invalidate cached partial likelihoods after a topology change (an
+    applySPR or rollbackSPR call). A plain clearAllPartialLH() is not
+    enough here: it only marks existing per-edge likelihood buffers as
+    stale, relying on IQ-TREE's incremental buffer-reuse bookkeeping
+    (PhyloTree::reorientPartialLh / mem_slots) to still correctly track
+    which buffer belongs to which edge. That bookkeeping assumes topology
+    changes only ever touch edges adjacent to an already-evaluated branch,
+    which is true for NNI but not for SPR (a regraft can jump to a
+    distant, never-yet-traversed edge), and silently building on a stale
+    slot assignment there crashes with either a "no buffer to reorient"
+    assertion or a buffer-aliasing assertion depending on the memory mode.
+    A full delete+reinitialize sidesteps the incremental bookkeeping
+    entirely by rebuilding every buffer assignment from scratch to match
+    the current topology; heavier per candidate, but unambiguously
+    correct, matching SPR_IMPLEMENTATION_PLAN's guidance to start from
+    full invalidation before ever optimizing cache reuse.
+ */
+void resetLikelihoodBuffers(PhyloTree &tree) {
+    tree.deleteAllPartialLh();
+    tree.initializeAllPartialLh();
+}
+
 } // namespace
 
 /**
@@ -392,6 +450,284 @@ int runListGrafts(const string &treeArg, const string &pruneSpec, int radius) {
     return 0;
 }
 
+/**
+    load a tree and a DNA alignment, and evaluate the log-likelihood of
+    that exact tree (topology and branch lengths as given) against that
+    alignment under a plain JC model with no rate heterogeneity. Does NOT
+    optimize branch lengths or model parameters -- this reports the
+    likelihood of the tree exactly as given, not the best achievable
+    likelihood for that topology. The alignment's sequence names must
+    match the tree's leaf names exactly (case-sensitive).
+    @return 0 on success, 1 if the tree/alignment couldn't be read or
+    matched
+ */
+int runLikelihood(const string &treeArg, const string &alignmentFile) {
+    ifstream check(alignmentFile.c_str());
+    if (!check.good()) {
+        cerr << "error: cannot open alignment file '" << alignmentFile << "'" << endl;
+        return 1;
+    }
+    check.close();
+
+    // Params is a process-wide singleton read by Alignment/ModelFactory/
+    // PhyloTree internals; nothing else in this executable touches it, so
+    // it's safe to just reset it to library defaults here.
+    Params &params = Params::getInstance();
+    params.setDefault();
+
+    InputType intype;
+    Alignment *aln = new Alignment((char*) alignmentFile.c_str(), (char*) "DNA", intype, "");
+
+    PhyloTree tree;
+    tree.setParams(&params);
+    // tree structure must exist before setAlignment, which looks up each
+    // alignment sequence name against the tree's already-built leaf nodes
+    readTreeArg(tree, treeArg);
+    tree.setAlignment(aln);
+    // PhyloTree::init() deliberately leaves num_threads at 0, expecting the
+    // normal analysis pipeline (which this tool bypasses) to set a real
+    // value later; getBufferPartialLhSize() asserts num_threads > 0
+    tree.setNumThreads(1);
+    // init() also calls setLikelihoodKernel() before any alignment exists,
+    // which leaves computeLikelihoodBranchPointer (and friends) null on
+    // this build (see the "no alignment specified yet" branch in
+    // PhyloTree::setLikelihoodKernel, phylotreesse.cpp); re-run it now
+    // that aln is set so it picks the real SSE likelihood kernel instead
+    tree.setLikelihoodKernel(LK_SSE2);
+
+    string modelName = "JC";
+    ModelsBlock *modelsBlock = readModelsDefinition(params);
+    tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
+    delete modelsBlock;
+    tree.setModel(tree.getModelFactory()->model);
+    tree.setRate(tree.getModelFactory()->site_rate);
+
+    tree.initializeAllPartialLh();
+    double logl = tree.computeLikelihood();
+
+    cout << "tree          : " << newickOf(tree) << endl;
+    cout << "alignment     : " << alignmentFile << " (" << aln->getNSeq() << " sequences, "
+         << aln->getNSite() << " sites)" << endl;
+    cout << "model         : " << modelName << " (fixed, no branch length or parameter optimization)" << endl;
+    cout << "log-likelihood: " << logl << endl;
+
+    delete aln;
+    return 0;
+}
+
+/**
+    greedy, randomized SPR hill-climbing search.
+
+    Takes the tree AliSim used to simulate an alignment (see the AliSim
+    command in tree/spr_topology_test_usage.txt for how to produce this
+    pair); the alignment file is derived automatically from trueTreeArg by
+    AliSim's own default naming convention (<prefix>.treefile paired with
+    <prefix>.fa).
+
+    Builds a BioNJ tree from that alignment as the starting "estimate"
+    tree, then repeats up to maxSteps times:
+      1. pick a uniformly random prune edge
+      2. enumerate every legal regraft candidate within `radius` hops
+         (findGraftPositions)
+      3. score every candidate by applySPR + computeLikelihood +
+         rollbackSPR on the SAME tree object -- no candidate ever gets its
+         own copy of the tree
+      4. apply the single best-scoring candidate (still via applySPR, on
+         that same tree object) and print the resulting tree
+      5. if its likelihood beats the current tree, keep the move and go to
+         step 1; otherwise roll it back and stop
+
+    The search also stops early if a chosen prune edge has zero legal
+    candidates within the radius, or if the tree runs out of degree-3
+    nodes to prune from (only possible on very small trees).
+
+    On completion, prints the Robinson-Foulds distance between the
+    original AliSim tree and the final tree to the terminal, and writes
+    both trees plus the RF distance to output.txt (repo root, overwritten
+    each run).
+
+    @return 0 on success, 1 if the tree/alignment couldn't be read
+ */
+int runHillClimb(const string &trueTreeArg, int radius, int maxSteps) {
+    // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
+    string alnFile = trueTreeArg;
+    const string suffix = ".treefile";
+    if (alnFile.size() > suffix.size()
+            && alnFile.compare(alnFile.size() - suffix.size(), suffix.size(), suffix) == 0)
+        alnFile = alnFile.substr(0, alnFile.size() - suffix.size()) + ".fa";
+    else
+        alnFile += ".fa";
+
+    ifstream alnCheck(alnFile.c_str());
+    if (!alnCheck.good()) {
+        cerr << "error: could not find alignment '" << alnFile << "'" << endl;
+        cerr << "  (derived from the tree argument by replacing '.treefile' with '.fa',"
+                " AliSim's own default output naming; generate a pair with e.g." << endl;
+        cerr << "   iqtree3 --alisim <prefix> -m GTR -t \"RANDOM{yh/20}\" --length 500)" << endl;
+        return 1;
+    }
+    alnCheck.close();
+
+    // the original AliSim tree, kept as a separate plain tree purely for
+    // the final RF-distance comparison -- never touched by any SPR move
+    PhyloTree trueTree;
+    readTreeArg(trueTree, trueTreeArg);
+    string trueTreeNewick = newickOf(trueTree);
+
+    Params &params = Params::getInstance();
+    params.setDefault();
+    // computeBioNJ writes/reads temporary files alongside this prefix
+    // (<prefix>.mldist, <prefix>.bionj) as part of how it builds the tree
+    params.out_prefix = (char*) "spr_hillclimb_tmp";
+
+    InputType intype;
+    Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
+
+    // no tree file is read here: computeDist + computeBioNJ build the
+    // starting tree structure directly from the alignment's own distance
+    // matrix, instead of the readTree-then-setAlignment order used by
+    // runLikelihood/runManualSPR
+    PhyloTree tree(aln);
+    tree.setParams(&params);
+    tree.computeDist(params, aln, tree.dist_matrix, tree.var_matrix);
+    tree.computeBioNJ(params);
+    // re-map leaf ids to match the alignment's sequence order/names, same
+    // as runLikelihood does after reading a tree from file
+    tree.setAlignment(aln);
+    tree.setNumThreads(1);
+    tree.setLikelihoodKernel(LK_SSE2);
+
+    string modelName = "JC";
+    ModelsBlock *modelsBlock = readModelsDefinition(params);
+    tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
+    delete modelsBlock;
+    tree.setModel(tree.getModelFactory()->model);
+    tree.setRate(tree.getModelFactory()->site_rate);
+    tree.initializeAllPartialLh();
+
+    double curScore = tree.computeLikelihood();
+
+    cout << "AliSim true tree: " << trueTreeNewick << endl;
+    cout << "BioNJ start tree: " << newickOf(tree) << " (logL = " << curScore << ")" << endl;
+    cout << "radius          : " << radius << endl;
+    cout << "max steps       : " << maxSteps << endl;
+
+    // time(nullptr) alone has only 1-second resolution, which repeats the
+    // exact same "random" sequence across rapid successive runs (e.g. a
+    // test script invoking this back to back); mix in getRealTime()'s
+    // sub-second precision too
+    init_random((int) (time(nullptr) * 1000 + (long) (getRealTime() * 1000) % 1000));
+
+    int step = 0;
+    for (; step < maxSteps; step++) {
+        cout << endl << "-- step " << (step + 1) << " --" << endl;
+
+        PhyloNode *pruneNode, *pruneDad;
+        if (!pickRandomPruneEdge(tree, pruneNode, pruneDad)) {
+            cout << "no degree-3 node left to prune from; stopping." << endl;
+            step++;
+            break;
+        }
+        cout << "random prune edge: above {" << describeEdge(pruneNode, pruneDad) << "}" << endl;
+
+        vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, radius);
+        if (candidates.empty()) {
+            cout << "no legal graft candidates within radius " << radius
+                 << " for this prune edge; keeping current tree and moving to next step." << endl;
+            continue;
+        }
+
+        // score every candidate on the SAME tree object via apply -> score
+        // -> rollback; never allocate a new tree per candidate
+        double bestScore = -DBL_MAX;
+        GraftCandidate bestCandidate = candidates[0];
+        for (size_t i = 0; i < candidates.size(); i++) {
+            const GraftCandidate &c = candidates[i];
+            SPRMove move;
+            move.prune_node = pruneNode;
+            move.prune_dad = pruneDad;
+            move.regraft_node = c.node;
+            move.regraft_dad = c.dad;
+            move.radius = c.radius;
+            move.screening_score = 0.0;
+            move.exact_score = 0.0;
+            move.candidate_id = (int) i;
+            move.generation = step;
+
+            SPRRollback rollback;
+            tree.applySPR(move, rollback);
+            resetLikelihoodBuffers(tree);
+            double score = tree.computeLikelihood();
+            tree.rollbackSPR(rollback);
+            resetLikelihoodBuffers(tree);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestCandidate = c;
+            }
+        }
+
+        cout << "best candidate: above {" << describeEdge(bestCandidate.node, bestCandidate.dad) << "}"
+             << " (radius " << bestCandidate.radius << "), logL = " << bestScore
+             << " (current logL = " << curScore << ")" << endl;
+
+        // apply the winning candidate for real, once, to print the
+        // resulting tree and decide whether to keep it
+        SPRMove bestMove;
+        bestMove.prune_node = pruneNode;
+        bestMove.prune_dad = pruneDad;
+        bestMove.regraft_node = bestCandidate.node;
+        bestMove.regraft_dad = bestCandidate.dad;
+        bestMove.radius = bestCandidate.radius;
+        bestMove.screening_score = 0.0;
+        bestMove.exact_score = bestScore;
+        bestMove.candidate_id = 0;
+        bestMove.generation = step;
+
+        SPRRollback bestRollback;
+        tree.applySPR(bestMove, bestRollback);
+        resetLikelihoodBuffers(tree);
+        cout << "candidate tree: " << newickOf(tree) << endl;
+
+        if (bestScore > curScore) {
+            cout << "improved (logL " << curScore << " -> " << bestScore << "); keeping this move." << endl;
+            curScore = bestScore;
+        } else {
+            cout << "no improvement within radius " << radius
+                 << "; rolling back and moving to next step." << endl;
+            tree.rollbackSPR(bestRollback);
+            resetLikelihoodBuffers(tree);
+        }
+    }
+
+    cout << endl << "=== finished after " << step << " step(s) ===" << endl;
+    string finalTreeNewick = newickOf(tree);
+    cout << "final tree (logL = " << curScore << "): " << finalTreeNewick << endl;
+
+    stringstream finalTreeStream;
+    finalTreeStream << finalTreeNewick;
+    finalTreeStream.seekg(0, ios::beg);
+    vector<double> rfdist;
+    trueTree.computeRFDist(finalTreeStream, rfdist);
+    int rf = rfdist.empty() ? -1 : (int) rfdist[0];
+
+    cout << "RF distance to the original AliSim tree: " << rf << endl;
+
+    ofstream out("output.txt");
+    if (out.good()) {
+        out << "AliSim true tree : " << trueTreeNewick << endl;
+        out << "Final result tree: " << finalTreeNewick << endl;
+        out << "RF distance      : " << rf << endl;
+        out.close();
+        cout << "Results written to output.txt" << endl;
+    } else {
+        cerr << "warning: could not write to output.txt" << endl;
+    }
+
+    delete aln;
+    return 0;
+}
+
 int runSelfTest() {
     // mirrors test_scripts/test_data/spr/six_taxa.start.tree: groups (A,C) and (B,D)
     string newick = "((A:0.10,C:0.10):0.10,(B:0.10,D:0.10):0.10,(E:0.10,F:0.10):0.10);";
@@ -511,7 +847,23 @@ void printUsage(const char *prog) {
     cerr << "      prune <prune-edge> and list every distinct, legal graft position within" << endl;
     cerr << "      <radius> hops of the prune point, without applying any of them." << endl;
     cerr << endl;
-    cerr << "  In both forms, an edge is a comma-separated leaf name list:" << endl;
+    cerr << "  " << prog << " --likelihood <tree.nwk | \"(newick,string);\"> <alignment.fasta>" << endl;
+    cerr << "      evaluate the log-likelihood of the given tree (topology and branch" << endl;
+    cerr << "      lengths as given, no optimization) against a DNA alignment under a" << endl;
+    cerr << "      plain JC model. Sequence names in the alignment must match the tree's" << endl;
+    cerr << "      leaf names exactly." << endl;
+    cerr << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps>" << endl;
+    cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
+    cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
+    cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
+    cerr << "      evaluate every legal regraft within <radius> hops via applySPR/" << endl;
+    cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
+    cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
+    cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
+    cerr << "      output.txt." << endl;
+    cerr << endl;
+    cerr << "  In the move/list-grafts forms, an edge is a comma-separated leaf name list:" << endl;
     cerr << "    a single leaf, e.g. C         -> that leaf's own pendant edge" << endl;
     cerr << "    two or more leaves, e.g. B,D  -> the internal edge above their MRCA" << endl;
     cerr << endl;
@@ -520,15 +872,26 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " tree.nwk C \"B,D\"                  (leaf onto an internal edge)" << endl;
     cerr << "    " << prog << " tree.nwk \"B,D\" \"E,F\"              (internal edge onto internal edge)" << endl;
     cerr << "    " << prog << " --list-grafts tree.nwk C 3         (list candidates within 3 hops of C)" << endl;
+    cerr << "    " << prog << " --likelihood tree.nwk aln.fasta    (evaluate likelihood)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 3 20      (hill-climb search)" << endl;
+    cerr << endl;
+    cerr << "  Full reference: tree/spr_topology_test_usage.txt" << endl;
 }
 
 int main(int argc, char **argv) {
     if (argc == 1)
         return runSelfTest();
-    if (argc == 4)
-        return runManualSPR(argv[1], argv[2], argv[3]);
+    // flag-based modes must be checked before the plain positional "apply
+    // one move" form below, since e.g. "--likelihood <tree> <aln>" is also
+    // exactly 4 arguments and would otherwise be misread as a move command
     if (argc == 5 && string(argv[1]) == "--list-grafts")
         return runListGrafts(argv[2], argv[3], atoi(argv[4]));
+    if (argc == 5 && string(argv[1]) == "--hillclimb")
+        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]));
+    if (argc == 4 && string(argv[1]) == "--likelihood")
+        return runLikelihood(argv[2], argv[3]);
+    if (argc == 4)
+        return runManualSPR(argv[1], argv[2], argv[3]);
     printUsage(argv[0]);
     return 1;
 }
