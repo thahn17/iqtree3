@@ -146,7 +146,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps>
+    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random]
 
     First, generate a ground-truth tree and a DNA alignment simulated along
     it with the real iqtree3 binary's built-in AliSim feature (this needs
@@ -165,7 +165,14 @@ Tree argument convention (used by every command that takes a tree):
     Algorithm:
       1. Build a BioNJ (neighbor-joining family) estimate tree directly
          from the alignment's distance matrix -- this, not the true tree,
-         is the tree actually searched.
+         is the tree actually searched. Append the literal word "random" as
+         a 4th argument to replace this with a random Yule-Harding topology
+         over the same taxa instead (PhyloTree::generateRandomTree, the
+         same engine behind IQ-TREE's own "-t RANDOM{yh/N}" starting
+         trees); branch lengths on it are randomly assigned by that same
+         generator, not derived from the alignment. Everything else about
+         the search (algorithm, output, exit codes) is unchanged -- only
+         where the search starts differs.
       2. Repeat, up to <max-steps> times:
            a. pick one uniformly random prune edge (a random degree-3 node,
               then a random one of its 3 neighbors)
@@ -197,19 +204,21 @@ Tree argument convention (used by every command that takes a tree):
 
     Also creates spr_hillclimb_tmp.* temporary files (a distance matrix and
     a .bionj file) in the current directory as a side effect of BioNJ
-    construction; safe to delete afterward.
+    construction; safe to delete afterward. Not created when starting from
+    a random tree (the "random" argument) -- that path never calls BioNJ.
 
     Exit code 0 on success (even if zero steps improved -- that is a valid,
     successful search outcome); 1 if the alignment couldn't be found next
     to the tree file.
 
-    Example:
+    Examples:
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random
 
 
 6) Greedy randomized SPR hill-climbing search with a decaying radius
 ------------------------------------------------------------------------
-    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay>
+    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random]
 
     Identical to --hillclimb (command 5 above; same input files, same
     algorithm, same output, same exit codes) except the regraft search
@@ -234,8 +243,13 @@ Tree argument convention (used by every command that takes a tree):
     --hillclimb (see command 5, algorithm step 2 and its "stop early"
     paragraph) -- it does not end the search early by itself.
 
-    Example:
+    Also accepts a trailing "random" argument, same as --hillclimb (see
+    command 5, algorithm step 1): starts from a random Yule-Harding
+    topology instead of the BioNJ estimate tree.
+
+    Examples:
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 random
 
 
 Generating input data with AliSim

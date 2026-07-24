@@ -547,8 +547,10 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     AliSim's own default naming convention (<prefix>.treefile paired with
     <prefix>.fa).
 
-    Builds a BioNJ tree from that alignment as the starting "estimate"
-    tree, then repeats up to maxSteps times:
+    Builds a BioNJ tree from that alignment as the starting "estimate" tree
+    (or, if randomStart is true, a random Yule-Harding topology over the
+    same taxa instead -- see randomStart below), then repeats up to
+    maxSteps times:
       1. pick a uniformly random prune edge
       2. enumerate every legal regraft candidate within the step's current
          radius (findGraftPositions) -- see radiusDecayPerStep below for how
@@ -569,8 +571,16 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     --hillclimb behavior) lets the radius shrink as the search progresses:
     step i (0-indexed) uses radius = max(1, ceil(radius - radiusDecayPerStep
     * i)) instead of the fixed `radius` for every step. The idea is to
-    search wide early on, when the BioNJ start tree is furthest from
-    optimal, then narrow to cheaper, more local moves later.
+    search wide early on, when the start tree is furthest from optimal,
+    then narrow to cheaper, more local moves later.
+
+    randomStart (default false, i.e. the original BioNJ-based --hillclimb
+    behavior) replaces the BioNJ estimate tree with a random Yule-Harding
+    topology over the same taxa (same engine PhyloTree::generateRandomTree
+    uses elsewhere in IQ-TREE for e.g. "-t RANDOM{yh/N}" input trees), so
+    the search starts from an arbitrary rather than a distance-based
+    starting point. Branch lengths on this random topology come from
+    generateRandomTree's own random assignment, not from the alignment.
 
     On completion, prints the Robinson-Foulds distance between the
     original AliSim tree and the final tree to the terminal, and writes
@@ -579,7 +589,8 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
 
     @return 0 on success, 1 if the tree/alignment couldn't be read
  */
-int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double radiusDecayPerStep = 0.0) {
+int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double radiusDecayPerStep = 0.0,
+        bool randomStart = false) {
     // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
     string alnFile = trueTreeArg;
     const string suffix = ".treefile";
@@ -611,6 +622,14 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
     // (<prefix>.mldist, <prefix>.bionj) as part of how it builds the tree
     params.out_prefix = (char*) "spr_hillclimb_tmp";
 
+    // seeded here, before any random tree generation, so that both a
+    // randomStart topology and every step's random prune-edge choice come
+    // from the same seeded sequence; time(nullptr) alone has only 1-second
+    // resolution, which repeats the exact same "random" sequence across
+    // rapid successive runs (e.g. a test script invoking this back to
+    // back), so getRealTime()'s sub-second precision is mixed in too
+    init_random((int) (time(nullptr) * 1000 + (long) (getRealTime() * 1000) % 1000));
+
     // the alignment/distance/BioNJ/model setup below goes through several
     // library code paths (Alignment, computeDist, computeBioNJ, ModelFactory)
     // that print their own progress noise (format detection, composition
@@ -623,17 +642,27 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
     InputType intype;
     Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
 
-    // no tree file is read here: computeDist + computeBioNJ build the
-    // starting tree structure directly from the alignment's own distance
-    // matrix, instead of the readTree-then-setAlignment order used by
-    // runLikelihood/runManualSPR
     PhyloTree tree(aln);
     tree.setParams(&params);
-    tree.computeDist(params, aln, tree.dist_matrix, tree.var_matrix);
-    tree.computeBioNJ(params);
-    // re-map leaf ids to match the alignment's sequence order/names, same
-    // as runLikelihood does after reading a tree from file
-    tree.setAlignment(aln);
+    if (randomStart) {
+        // generateRandomTree requires tree.aln (set by the PhyloTree(aln)
+        // constructor above) and tree.params (set just above); it builds a
+        // random Yule-Harding topology, renames its leaves to match aln's
+        // sequence names, and calls setAlignment(aln) on itself internally
+        // (see PhyloTree::generateRandomTree / readTreeStringSeqName) --
+        // this is the same engine IQ-TREE's own "-t RANDOM{yh/N}" uses
+        tree.generateRandomTree(YULE_HARDING);
+    } else {
+        // no tree file is read here: computeDist + computeBioNJ build the
+        // starting tree structure directly from the alignment's own distance
+        // matrix, instead of the readTree-then-setAlignment order used by
+        // runLikelihood/runManualSPR
+        tree.computeDist(params, aln, tree.dist_matrix, tree.var_matrix);
+        tree.computeBioNJ(params);
+        // re-map leaf ids to match the alignment's sequence order/names, same
+        // as runLikelihood does after reading a tree from file
+        tree.setAlignment(aln);
+    }
     tree.setNumThreads(1);
     tree.setLikelihoodKernel(LK_SSE2);
 
@@ -666,17 +695,12 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
 
     cout.rdbuf(realCoutBuf);
 
-    cout << "BioNJ start tree: " << newickOf(tree) << " (logL = " << curScore << ")" << endl;
+    cout << (randomStart ? "random start tree: " : "BioNJ start tree : ")
+         << newickOf(tree) << " (logL = " << curScore << ")" << endl;
     cout << "radius          : " << radius << endl;
     if (radiusDecayPerStep > 0.0)
         cout << "radius decay    : " << radiusDecayPerStep << " per step (min 1)" << endl;
     cout << "max steps       : " << maxSteps << endl;
-
-    // time(nullptr) alone has only 1-second resolution, which repeats the
-    // exact same "random" sequence across rapid successive runs (e.g. a
-    // test script invoking this back to back); mix in getRealTime()'s
-    // sub-second precision too
-    init_random((int) (time(nullptr) * 1000 + (long) (getRealTime() * 1000) % 1000));
 
     int step = 0;
     for (; step < maxSteps; step++) {
@@ -926,12 +950,14 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt." << endl;
+    cerr << "      output.txt. Append the literal word 'random' to start from a random" << endl;
+    cerr << "      Yule-Harding topology instead of the default BioNJ estimate tree." << endl;
     cerr << endl;
     cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay>" << endl;
     cerr << "      same search as --hillclimb, but the radius shrinks by <decay> each step" << endl;
     cerr << "      (step i uses radius = max(1, ceil(<radius> - <decay> * i)) instead of a" << endl;
-    cerr << "      fixed <radius> for every step)." << endl;
+    cerr << "      fixed <radius> for every step). Also accepts a trailing 'random' argument," << endl;
+    cerr << "      same as --hillclimb." << endl;
     cerr << endl;
     cerr << "  In the move/list-grafts forms, an edge is a comma-separated leaf name list:" << endl;
     cerr << "    a single leaf, e.g. C         -> that leaf's own pendant edge" << endl;
@@ -944,7 +970,9 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --list-grafts tree.nwk C 3         (list candidates within 3 hops of C)" << endl;
     cerr << "    " << prog << " --likelihood tree.nwk aln.fasta    (evaluate likelihood)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20      (hill-climb search)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random   (random Yule-Harding start tree)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5  (hill-climb, shrinking radius)" << endl;
+    cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 random  (same, random start tree)" << endl;
     cerr << endl;
     cerr << "  Full reference: tree/spr_topology_test_usage.txt" << endl;
 }
@@ -959,8 +987,12 @@ int main(int argc, char **argv) {
         return runListGrafts(argv[2], argv[3], atoi(argv[4]));
     if (argc == 5 && string(argv[1]) == "--hillclimb")
         return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]));
+    if (argc == 6 && string(argv[1]) == "--hillclimb" && string(argv[5]) == "random")
+        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, true);
     if (argc == 6 && string(argv[1]) == "--hillclimb-decay")
         return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]));
+    if (argc == 7 && string(argv[1]) == "--hillclimb-decay" && string(argv[6]) == "random")
+        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]), true);
     if (argc == 4 && string(argv[1]) == "--likelihood")
         return runLikelihood(argv[2], argv[3]);
     if (argc == 4)
