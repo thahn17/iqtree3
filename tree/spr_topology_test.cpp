@@ -21,9 +21,11 @@
 #include "utils/timeutil.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <queue>
 #include <set>
@@ -293,33 +295,520 @@ vector<GraftCandidate> findGraftPositions(PhyloTree &tree, PhyloNode *pruneNode,
 }
 
 /**
-    collect every degree-3 node in the tree (every node that could serve as
-    a prune_dad -- see isLegalSPR's degree check), by a plain DFS from
-    `node`.
+    every SPR-eligible edge in the tree, indexed by a stable slot number so
+    choosePrune() can pick a uniformly random one in O(1) -- no traversal.
+    "Eligible" excludes the one edge incident to the tree's arbitrary root
+    leaf (tree.root), which isLegalSPR always rejects regardless of how it's
+    addressed.
+
+    Kept in sync by applySPRTracked/rollbackSPRTracked below instead of
+    being rebuilt from scratch: an SPR move always destroys exactly 3 edges
+    and creates exactly 3 new ones, reusing the same 3 freed slots (see the
+    comment on applySPRTracked), so an update costs a small constant number
+    of hash-map operations, never a tree traversal.
  */
-void collectDegree3Nodes(PhyloNode *node, PhyloNode *dad, vector<PhyloNode*> &nodes) {
-    if (node->degree() == 3)
-        nodes.push_back(node);
-    FOR_NEIGHBOR_IT(node, dad, it)
-        collectDegree3Nodes((PhyloNode*) (*it)->node, node, nodes);
+struct EdgeRegistry {
+    vector<pair<PhyloNode*, PhyloNode*> > slots;
+    unordered_map<uint64_t, int> slotOfKey;
+
+    // order-independent key for the edge {a,b}, from their (stable, unique)
+    // node ids -- so looking up an edge doesn't care which side is passed
+    // as a vs b
+    static uint64_t key(PhyloNode *a, PhyloNode *b) {
+        uint32_t lo = (uint32_t) min(a->id, b->id);
+        uint32_t hi = (uint32_t) max(a->id, b->id);
+        return (((uint64_t) hi) << 32) | lo;
+    }
+
+    void addEdge(PhyloNode *a, PhyloNode *b) {
+        slotOfKey[key(a, b)] = (int) slots.size();
+        slots.push_back(make_pair(a, b));
+    }
+
+    int slotOf(PhyloNode *a, PhyloNode *b) const {
+        unordered_map<uint64_t, int>::const_iterator it = slotOfKey.find(key(a, b));
+        ASSERT(it != slotOfKey.end());
+        return it->second;
+    }
+
+    // overwrite 3 slots at once with 3 new edges. Must be batched like this
+    // (erase all 3 stale keys first, only then insert all 3 new ones)
+    // rather than done as 3 independent erase-then-insert calls: when a
+    // regraft target lands next to one of the prune point's own siblings
+    // (a common, legal case -- any radius-2 candidate), one of the 3 new
+    // edges can have the exact same key as a DIFFERENT one of the 3 old
+    // edges being replaced in the same batch. Inserting that new key
+    // one-slot-at-a-time would silently overwrite the old mapping before
+    // its own slot's turn to erase it comes up, so that erase call would
+    // then wrongly delete the just-inserted (correct, still-needed) key
+    // instead of the stale one -- permanently losing a key for an edge
+    // that's still very much in the registry (this is exactly what caused
+    // an intermittent "not found" assertion in slotOf() during testing).
+    void replaceEdges3(int slotA, PhyloNode *a1, PhyloNode *a2,
+                        int slotB, PhyloNode *b1, PhyloNode *b2,
+                        int slotC, PhyloNode *c1, PhyloNode *c2) {
+        slotOfKey.erase(key(slots[slotA].first, slots[slotA].second));
+        slotOfKey.erase(key(slots[slotB].first, slots[slotB].second));
+        slotOfKey.erase(key(slots[slotC].first, slots[slotC].second));
+
+        slots[slotA] = make_pair(a1, a2);
+        slots[slotB] = make_pair(b1, b2);
+        slots[slotC] = make_pair(c1, c2);
+
+        slotOfKey[key(a1, a2)] = slotA;
+        slotOfKey[key(b1, b2)] = slotB;
+        slotOfKey[key(c1, c2)] = slotC;
+    }
+
+    // same idea as replaceEdges3, batched the same way, but for the
+    // 2-slot case used when one of dad1's siblings is the tree's root leaf
+    // (see applySPRTracked) -- its edge to dad1, and the edge this move
+    // creates in its place, are never tracked at all (buildEdgeRegistry
+    // excludes root's one edge from the registry by design), so only 2 of
+    // the usual 3 edges actually have real slots to update.
+    void replaceEdges2(int slotA, PhyloNode *a1, PhyloNode *a2,
+                        int slotB, PhyloNode *b1, PhyloNode *b2) {
+        slotOfKey.erase(key(slots[slotA].first, slots[slotA].second));
+        slotOfKey.erase(key(slots[slotB].first, slots[slotB].second));
+
+        slots[slotA] = make_pair(a1, a2);
+        slots[slotB] = make_pair(b1, b2);
+
+        slotOfKey[key(a1, a2)] = slotA;
+        slotOfKey[key(b1, b2)] = slotB;
+    }
+};
+
+void collectEdgesExceptRoot(PhyloNode *node, PhyloNode *dad, EdgeRegistry &reg) {
+    FOR_NEIGHBOR_IT(node, dad, it) {
+        PhyloNode *child = (PhyloNode*) (*it)->node;
+        reg.addEdge(node, child);
+        collectEdgesExceptRoot(child, node, reg);
+    }
 }
 
 /**
-    pick a uniformly random prune edge: a uniformly random degree-3 node in
-    the tree, then a uniformly random one of its 3 neighbors to prune away.
-    Requires init_random() to already have been called once.
-    @return false if the tree has no degree-3 node at all (outNode/outDad
-    left untouched)
+    build an EdgeRegistry over `tree`: one O(n) DFS, starting on the far
+    side of tree.root's own single edge so that edge (the "1 edge at the
+    top" -- tree.root is always this framework's arbitrary root leaf, never
+    a real prune/graft target) is the one edge structurally never added,
+    exactly matching what isLegalSPR always rejects.
  */
-bool pickRandomPruneEdge(PhyloTree &tree, PhyloNode* &outNode, PhyloNode* &outDad) {
-    vector<PhyloNode*> degree3Nodes;
-    collectDegree3Nodes((PhyloNode*) tree.root, nullptr, degree3Nodes);
-    if (degree3Nodes.empty())
+void buildEdgeRegistry(PhyloTree &tree, EdgeRegistry &reg) {
+    reg.slots.clear();
+    reg.slotOfKey.clear();
+    PhyloNode *root = (PhyloNode*) tree.root;
+    PhyloNode *belowRoot = (PhyloNode*) root->neighbors[0]->node;
+    collectEdgesExceptRoot(belowRoot, root, reg);
+}
+
+/**
+    true if tree.root lies within the subtree rooted at `node`, viewed away
+    from `awayFrom` -- i.e. `node`'s side of the (node,awayFrom) edge.
+    Used only for genuinely rooted trees, to orient a prune so the tree's
+    real root always ends up on the "dad" (remaining tree) side, never the
+    "node" (pruned branch) side; a plain recursive walk, not O(1), but only
+    ever invoked when tree.rooted, which --hillclimb's own trees never are.
+ */
+bool subtreeContainsRoot(PhyloTree &tree, PhyloNode *node, PhyloNode *awayFrom) {
+    if (node == (PhyloNode*) tree.root)
+        return true;
+    FOR_NEIGHBOR_IT(node, awayFrom, it)
+        if (subtreeContainsRoot(tree, (PhyloNode*) (*it)->node, node))
+            return true;
+    return false;
+}
+
+/**
+    pick a uniformly random SPR-eligible edge from `reg` in O(1) (a single
+    array-index pick, no tree traversal) and resolve it into a legal
+    (outNode,outDad) prune pair. Requires init_random() to already have
+    been called once.
+
+    Every internal node is degree 3 and every leaf is degree 1 in the
+    fully-bifurcating trees this tool works with, and applySPR/rollbackSPR
+    never change any node's degree (see applySPRTracked below) -- so for a
+    leaf-internal edge exactly one endpoint is a valid prune_dad, while for
+    an internal-internal edge either endpoint would do.
+
+    For an unrooted tree (the common case for --hillclimb's own BioNJ/
+    Yule-Harding trees), which of the two degree-3 endpoints becomes dad is
+    just a coin flip -- tree.root is only this framework's arbitrary
+    bookkeeping leaf there (its own edge is already excluded from `reg` by
+    buildEdgeRegistry), so it doesn't matter which side it ends up on.
+
+    For a genuinely rooted tree (tree.rooted), it does matter: tree.root is
+    a real topological root, and it must always end up on the "dad" (the
+    tree that remains) side, never the "node" (pruned branch) side --
+    otherwise the move would effectively prune away the tree's own root.
+    subtreeContainsRoot decides which side that is; if degree alone would
+    force the opposite orientation (root's side isn't the degree-3 one),
+    this edge has no valid direction at all and is skipped, not returned.
+
+    @return false if the registry is empty (no edge to prune at all, e.g. a
+    2-leaf tree), or if every attempted pick has no valid orientation
+    (bounded retries, see below)
+ */
+bool choosePrune(PhyloTree &tree, EdgeRegistry &reg, PhyloNode* &outNode, PhyloNode* &outDad) {
+    if (reg.slots.empty())
         return false;
-    outDad = degree3Nodes[random_int((int) degree3Nodes.size())];
-    outNode = (PhyloNode*) outDad->neighbors[random_int(3)]->node;
+    // bounded retry: for a rooted tree, only edges adjacent to the root
+    // can ever fail the orientation check below, a small fraction of the
+    // registry, so this succeeds within the first few attempts in
+    // practice; the bound just guarantees termination
+    for (int attempt = 0; attempt < (int) reg.slots.size(); attempt++) {
+        pair<PhyloNode*, PhyloNode*> &edge = reg.slots[random_int((int) reg.slots.size())];
+        bool aIsDad = edge.first->degree() == 3;
+        bool bIsDad = edge.second->degree() == 3;
+        if (!aIsDad && !bIsDad)
+            continue;
+
+        bool firstHasRoot = tree.rooted && subtreeContainsRoot(tree, edge.first, edge.second);
+
+        if (aIsDad && bIsDad) {
+            if (tree.rooted) {
+                if (firstHasRoot) { outDad = edge.first; outNode = edge.second; }
+                else { outDad = edge.second; outNode = edge.first; }
+            } else if (random_int(2) == 0) {
+                outDad = edge.first; outNode = edge.second;
+            } else {
+                outDad = edge.second; outNode = edge.first;
+            }
+        } else if (aIsDad) {
+            if (tree.rooted && !firstHasRoot)
+                continue; // edge.first as dad would strand root on the pruned side
+            outDad = edge.first; outNode = edge.second;
+        } else {
+            if (tree.rooted && firstHasRoot)
+                continue; // edge.second as dad would strand root on the pruned side
+            outDad = edge.second; outNode = edge.first;
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+    relative weight for picking graft distance `d` (1..r) in chooseGraft.
+    Currently flat (every distance in range equally likely) -- change only
+    this function's body to favor closer or farther distances instead
+    (e.g. return 1.0 / d to favor close graft points); chooseGraftDistance's
+    sampling logic itself never needs to change.
+ */
+double graftDistanceWeight(int d) {
+    return 1.0;
+}
+
+/**
+    pick a random graft distance in [1,r], weighted by graftDistanceWeight.
+ */
+int chooseGraftDistance(int r) {
+    vector<double> weight(r);
+    double total = 0.0;
+    for (int d = 1; d <= r; d++) {
+        weight[d - 1] = graftDistanceWeight(d);
+        total += weight[d - 1];
+    }
+    double x = random_double() * total;
+    double cum = 0.0;
+    for (int d = 1; d <= r; d++) {
+        cum += weight[d - 1];
+        if (x < cum)
+            return d;
+    }
+    return r; // floating-point fallback; should only trigger on rounding
+}
+
+/**
+    pick a single random SPR regraft target for the (pruneNode,pruneDad)
+    edge choosePrune() already selected, via a directed random walk instead
+    of enumerating every legal candidate the way findGraftPositions does --
+    O(distance walked) rather than O(candidates within radius r).
+
+    First picks a target distance d in [1,r] via chooseGraftDistance (see
+    graftDistanceWeight to change how distance is weighted). Then walks d
+    steps starting from "the edge above the pruned edge" -- the
+    (sibling1,sibling2) edge that would exist once pruneDad is suppressed,
+    even though pruneDad hasn't actually been suppressed yet (this mirrors
+    findGraftPositions: pruneDad's own edges are never legal targets, so
+    this is exactly where a graft-target search actually begins).
+
+    Step 1 is a special case: pick uniformly among every real edge incident
+    to sibling1 or sibling2 (excluding their shared edge to pruneDad --
+    that's the illegal "start edge" itself, never a candidate at all).
+
+    Steps 2..d: only 3 pointers are ever tracked -- grandDad, dad, node --
+    where (dad,node) is the current edge and (grandDad,dad) is the edge the
+    walk was on immediately before this one. There's no history beyond
+    that single edge: grandDad is overwritten on every move (including
+    tier 2's sideways ones), always to whichever node was just displaced,
+    so it's always "the edge just come from" for whatever the new current
+    edge is -- never a deeper record of how the walk got there. Prefer, in
+    order:
+      1. node's other edges (walk further outward; up to 2 candidates):
+         grandDad=dad, dad=node, node=<pick>
+      2. dad's remaining edge, other than the one leading back to grandDad
+         (a sideways step onto dad's other, not-yet-explored branch; at
+         most 1 candidate, and -- since dad is always degree 3 here --
+         effectively always exactly 1): grandDad=node, node=<pick> (dad
+         unchanged)
+      3. the edge just come from, (grandDad,dad) -- this is not a special
+         "undo" move, just the lowest-priority option, tried only when
+         neither of the above has anything to offer: dad=grandDad,
+         node=dad, grandDad=node (using each variable's value from before
+         this reassignment). Only usable when grandDad is actually still
+         adjacent to dad, which holds right after step 1 and right after a
+         tier-1 move, but not in general right after an earlier tier-3 move
+         itself (grandDad then refers to whatever node just got displaced,
+         two hops from the new dad, not one) -- so two tier-3 moves never
+         fire back to back; that's checked directly (dad->isNeighbor(
+         grandDad)) rather than assumed, since without it two-in-a-row
+         would fabricate a "current edge" between nodes that were never
+         actually adjacent
+    Ties within whichever tier is chosen are broken uniformly at random.
+
+    Two things are excluded from ever being selected as dad or node at all,
+    at every step: the tree's arbitrary root leaf (isLegalSPR always
+    rejects grafting onto its edge, regardless of distance -- and since
+    that leaf could be anywhere in the tree, not just near the prune point,
+    it has to be filtered out of every tier's candidates, not assumed
+    unreachable), and pruneNode itself (tier 3 can reach back through
+    pruneDad -- see below -- and must never continue on into the very
+    subtree being pruned).
+
+    pruneDad itself can end up as dad mid-walk (reachable via tier 3 right
+    after step 1, since grandDad starts out equal to pruneDad there), but
+    never as the walk's FINAL position, since that's the one edge no legal
+    regraft target can ever be: tier 3 is skipped as the last move if
+    grandDad is pruneDad (that would make dad=pruneDad the result), and
+    separately, if dad is already pruneDad going into the last step, tier 2
+    is skipped too, since it never changes dad -- only tier 1 is guaranteed
+    to move dad away from pruneDad, so it's the only option left in that
+    situation.
+
+    With all that excluded up front, every candidate this walk can ever
+    produce is legal by construction, unlike findGraftPositions which
+    instead runs isLegalSPR per candidate after the fact (still ASSERTed
+    below anyway, as a cheap defense-in-depth check -- this is exactly how
+    an earlier version of this function, which forgot the root-leaf
+    exclusion, was caught producing an illegal candidate during testing).
+
+    outDistance, if non-null, receives the walk length d that was chosen
+    (not necessarily the true hop-distance of the final edge from the
+    prune point -- tier 2/3 moves don't always change hop-distance the way
+    a pure tier-1 walk would -- just the number of random-walk steps
+    taken, for logging purposes).
+
+    @return false if there is no edge to graft onto at all (sibling1 and
+    sibling2 are both leaves, e.g. a 3-leaf tree)
+ */
+bool chooseGraft(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int r,
+        PhyloNode* &outNode, PhyloNode* &outDad, int *outDistance = nullptr) {
+    int d = chooseGraftDistance(r);
+    if (outDistance)
+        *outDistance = d;
+
+    // grafting onto the edge incident to the tree's arbitrary root leaf is
+    // always illegal (see isLegalSPR's last check) regardless of distance
+    // from the prune point; since that leaf could be anywhere in the tree,
+    // every candidate-building step below excludes it, exactly as if it
+    // had no edge to offer at all (it's a real leaf otherwise, so this is
+    // one of two exclusions beyond the usual tier logic -- see pruneNode
+    // below for the other)
+    PhyloNode *root = (PhyloNode*) tree.root;
+
+    // step 1 (special case): every real edge off sibling1 or sibling2,
+    // excluding the edge back to pruneDad
+    vector<pair<PhyloNode*, PhyloNode*> > firstStep; // (dad=near, node=far)
+    FOR_NEIGHBOR_IT(pruneDad, pruneNode, it) {
+        PhyloNode *sibling = (PhyloNode*) (*it)->node;
+        FOR_NEIGHBOR_IT(sibling, pruneDad, it2)
+            if ((*it2)->node != root)
+                firstStep.push_back(make_pair(sibling, (PhyloNode*) (*it2)->node));
+    }
+    if (firstStep.empty())
+        return false;
+
+    pair<PhyloNode*, PhyloNode*> chosen = firstStep[random_int((int) firstStep.size())];
+    // grandDad is the other end of the edge the walk was just on -- always
+    // pruneDad itself right after step 1, since that's the edge (sibling,
+    // pruneDad) the walk left to get here
+    PhyloNode *grandDad = pruneDad;
+    PhyloNode *dad = chosen.first;
+    PhyloNode *node = chosen.second;
+
+    for (int step = 2; step <= d; step++) {
+        // pruneDad is excluded here (in addition to root/pruneNode) since
+        // it can only ever legitimately become dad, via the tier-3
+        // crossing below, which sets dad directly and never consults these
+        // lists; letting it slip in here as a tier-1/tier-2 candidate would
+        // instead make it `node`, e.g. whenever node currently sits at one
+        // of pruneDad's own siblings and dad is one hop further out --
+        // `node`'s own neighbors then legitimately include pruneDad -- and
+        // node==pruneDad is exactly as illegal as dad==pruneDad
+        vector<PhyloNode*> tier1, tier2;
+        FOR_NEIGHBOR_IT(node, dad, it)
+            if ((*it)->node != root && (*it)->node != pruneNode && (*it)->node != pruneDad)
+                tier1.push_back((PhyloNode*) (*it)->node);
+
+        // on the last step, dad must not still be pruneDad afterward (that
+        // would make the final answer pruneDad's own edge); tier 1 always
+        // moves dad away from pruneDad (dad becomes node, which by
+        // construction is never pruneDad), but tier 2 never changes dad at
+        // all -- so if dad is already pruneDad, tier 2 must be skipped on
+        // the last step, forcing tier 1 (or, failing that, nothing) to fire
+        bool mustLeavePruneDad = (step == d) && (dad == pruneDad);
+        if (!mustLeavePruneDad) {
+            FOR_NEIGHBOR_IT(dad, node, it)
+                if ((*it)->node != grandDad && (*it)->node != root && (*it)->node != pruneNode
+                        && (*it)->node != pruneDad)
+                    tier2.push_back((PhyloNode*) (*it)->node);
+        }
+
+        if (!tier1.empty()) {
+            grandDad = dad;
+            dad = node;
+            node = tier1[random_int((int) tier1.size())];
+        } else if (!tier2.empty()) {
+            grandDad = node;
+            node = tier2[random_int((int) tier2.size())];
+        } else if (dad->isNeighbor(grandDad) && !(step == d && grandDad == pruneDad)) {
+            // tier 3 (the edge just come from): only a real candidate if
+            // grandDad is still actually adjacent to dad -- which is true
+            // right after step 1, and right after a tier-1 move, but NOT
+            // in general right after an earlier tier-3 move itself (that
+            // reassigns grandDad to whatever node just got displaced,
+            // which sits two hops away from the new dad, not one) --
+            // requiring the check here, rather than assuming tier 3 always
+            // has a valid destination, is what stops two tier-3 moves in a
+            // row from producing a nonexistent "edge" between unrelated
+            // nodes (caught by the isLegalSPR ASSERT below during testing).
+            // Also skipped as the last move if it would make the result
+            // pruneDad's own edge (grandDad==pruneDad would become
+            // dad==pruneDad)
+            PhyloNode *oldDad = dad, *oldNode = node;
+            dad = grandDad;
+            node = oldDad;
+            grandDad = oldNode;
+        }
+        // else: no legal move at all this step (only possible in a tiny
+        // tree, or when mustLeavePruneDad forbids the only tier that would
+        // otherwise fire); nothing to do
+    }
+
+    outDad = dad;
+    outNode = node;
+
+    SPRMove move;
+    move.prune_node = pruneNode;
+    move.prune_dad = pruneDad;
+    move.regraft_node = outNode;
+    move.regraft_dad = outDad;
+    ASSERT(tree.isLegalSPR(move));
+
     return true;
 }
+
+/**
+    bookkeeping stashed by applySPRTracked so rollbackSPRTracked can restore
+    the registry (not just the tree) to its exact prior state.
+ */
+struct TrackedSPR {
+    SPRMove move;
+    SPRRollback rollback;
+    PhyloNode *sibling1, *sibling2;
+    int slotDad1Sib1, slotDad1Sib2, slotNode2Dad2; // -1 where not tracked (see below)
+    bool sib1IsRoot, sib2IsRoot;
+};
+
+/**
+    apply an SPR move and keep `reg` in sync with the result, in O(1).
+
+    Every applySPR call destroys exactly 3 edges and creates exactly 3 new
+    ones (see PhyloTree::applySPR in phylotree.cpp): pruning detaches dad1
+    from node1 by directly connecting dad1's other two neighbors --
+    "sibling1" and "sibling2" -- to each other (destroying edges
+    dad1-sibling1 and dad1-sibling2, creating sibling1-sibling2); then dad1
+    itself (never deleted -- applySPR keeps the same node object and just
+    repoints its now-spare neighbor slots) is spliced into the regraft edge
+    (destroying node2-dad2, creating dad1-dad2 and dad1-node2). No node's
+    degree ever changes anywhere in this -- dad1 stays degree 3 throughout,
+    and sibling1/sibling2/node2/dad2 each just swap which node one
+    particular neighbor slot points at -- so the registry never needs a
+    slot added or removed, only these same 3 existing slots repointed to
+    their new edge.
+
+    The one exception: if dad1 happens to be currently adjacent to the
+    tree's root leaf, one of "sibling1"/"sibling2" above IS that root leaf.
+    dad1's edge to it is never in the registry to begin with (buildEdgeRegistry
+    excludes root's one edge by design -- see its comment), and the edge
+    this move creates in its place -- from root to dad1's OTHER sibling --
+    becomes the new such excluded edge, so it must not be tracked either.
+    In that case only 2 of the usual 3 edges have real slots at all, so
+    replaceEdges2 (not replaceEdges3) is used instead.
+
+    sibling1/sibling2 are captured here, before the move, since afterward
+    dad1 is no longer adjacent to them.
+ */
+void applySPRTracked(PhyloTree &tree, EdgeRegistry &reg, const SPRMove &move, TrackedSPR &t) {
+    t.move = move;
+    PhyloNode *dad1 = move.prune_dad;
+    PhyloNode *node1 = move.prune_node;
+    PhyloNode *node2 = move.regraft_node;
+    PhyloNode *dad2 = move.regraft_dad;
+    PhyloNode *root = (PhyloNode*) tree.root;
+
+    t.sibling1 = t.sibling2 = nullptr;
+    FOR_NEIGHBOR_IT(dad1, node1, it) {
+        if (!t.sibling1)
+            t.sibling1 = (PhyloNode*) (*it)->node;
+        else
+            t.sibling2 = (PhyloNode*) (*it)->node;
+    }
+
+    t.sib1IsRoot = (t.sibling1 == root);
+    t.sib2IsRoot = (t.sibling2 == root);
+    ASSERT(!(t.sib1IsRoot && t.sib2IsRoot)); // root can't be both of dad1's siblings
+
+    t.slotDad1Sib1 = t.sib1IsRoot ? -1 : reg.slotOf(dad1, t.sibling1);
+    t.slotDad1Sib2 = t.sib2IsRoot ? -1 : reg.slotOf(dad1, t.sibling2);
+    t.slotNode2Dad2 = reg.slotOf(node2, dad2);
+
+    tree.applySPR(move, t.rollback);
+
+    if (!t.sib1IsRoot && !t.sib2IsRoot) {
+        reg.replaceEdges3(t.slotDad1Sib1, dad1, dad2,
+                          t.slotDad1Sib2, dad1, node2,
+                          t.slotNode2Dad2, t.sibling1, t.sibling2);
+    } else {
+        int nonRootSlot = t.sib1IsRoot ? t.slotDad1Sib2 : t.slotDad1Sib1;
+        reg.replaceEdges2(nonRootSlot, dad1, dad2,
+                          t.slotNode2Dad2, dad1, node2);
+    }
+}
+
+/**
+    undo an applySPRTracked call: rolls back the tree exactly as
+    tree.rollbackSPR always did, and restores `reg`'s tracked slots to
+    exactly what they held beforehand (see applySPRTracked for why this is
+    sometimes 2 slots, not 3).
+ */
+void rollbackSPRTracked(PhyloTree &tree, EdgeRegistry &reg, const TrackedSPR &t) {
+    tree.rollbackSPR(t.rollback);
+
+    PhyloNode *dad1 = t.move.prune_dad;
+    if (!t.sib1IsRoot && !t.sib2IsRoot) {
+        reg.replaceEdges3(t.slotDad1Sib1, dad1, t.sibling1,
+                          t.slotDad1Sib2, dad1, t.sibling2,
+                          t.slotNode2Dad2, t.move.regraft_node, t.move.regraft_dad);
+    } else {
+        int nonRootSlot = t.sib1IsRoot ? t.slotDad1Sib2 : t.slotDad1Sib1;
+        PhyloNode *nonRootSibling = t.sib1IsRoot ? t.sibling2 : t.sibling1;
+        reg.replaceEdges2(nonRootSlot, dad1, nonRootSibling,
+                          t.slotNode2Dad2, t.move.regraft_node, t.move.regraft_dad);
+    }
+}
+
 
 /**
     invalidate cached partial likelihoods after a topology change (an
@@ -550,29 +1039,48 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     Builds a BioNJ tree from that alignment as the starting "estimate" tree
     (or, if randomStart is true, a random Yule-Harding topology over the
     same taxa instead -- see randomStart below), then repeats up to
-    maxSteps times:
-      1. pick a uniformly random prune edge
-      2. enumerate every legal regraft candidate within the step's current
+    maxSteps times. Each step first picks a prune edge via choosePrune() --
+    an O(1) pick from the EdgeRegistry built (and incrementally kept in
+    sync) alongside the tree, no traversal needed -- then picks a regraft
+    target one of two ways, depending on useFastSelection:
+
+    useFastSelection = false (default, the original --hillclimb behavior):
+      1. enumerate every legal regraft candidate within the step's current
          radius (findGraftPositions) -- see radiusDecayPerStep below for how
          that can shrink from `radius` as steps progress
-      3. score every candidate by applySPR + computeLikelihood +
+      2. score every candidate by applySPR + computeLikelihood +
          rollbackSPR on the SAME tree object -- no candidate ever gets its
          own copy of the tree
-      4. apply the single best-scoring candidate (still via applySPR, on
-         that same tree object) and print the resulting tree
-      5. if its likelihood beats the current tree, keep the move and go to
-         step 1; otherwise roll it back and stop
+      3. apply the single best-scoring candidate (still via applySPR, on
+         that same tree object)
+      4. if its likelihood beats the current tree, keep the move; otherwise
+         roll it back
+    This is a steepest-descent-within-radius search: exhaustive but O(radius)
+    candidates scored per step.
 
-    The search also stops early if a chosen prune edge has zero legal
-    candidates within the radius, or if the tree runs out of degree-3
-    nodes to prune from (only possible on very small trees).
+    useFastSelection = true: instead of enumerating and scoring every
+    candidate in the radius, chooseGraft() picks a single random regraft
+    target via a weighted-distance random walk (O(distance walked), no
+    enumeration at all -- see chooseGraft's own comment), which is applied,
+    scored, and kept or rolled back exactly like the single best candidate
+    above. This turns the search into a proposal-based random walk (accept
+    if it improves, revert otherwise) rather than steepest descent, trading
+    the guarantee of finding the best move in the radius for an O(1)-ish
+    per-step cost instead of O(radius).
+
+    Either way, the search also stops early if a chosen prune edge has zero
+    legal candidates within the radius (useFastSelection=false) or no edge
+    to graft onto at all (useFastSelection=true, only possible on a 3-leaf
+    tree), or if the tree runs out of degree-3 nodes to prune from (only
+    possible on very small trees).
 
     radiusDecayPerStep (default 0.0, i.e. constant radius -- the original
     --hillclimb behavior) lets the radius shrink as the search progresses:
     step i (0-indexed) uses radius = max(1, ceil(radius - radiusDecayPerStep
     * i)) instead of the fixed `radius` for every step. The idea is to
     search wide early on, when the start tree is furthest from optimal,
-    then narrow to cheaper, more local moves later.
+    then narrow to cheaper, more local moves later. Under useFastSelection,
+    this instead shrinks chooseGraft's own maximum walk distance.
 
     randomStart (default false, i.e. the original BioNJ-based --hillclimb
     behavior) replaces the BioNJ estimate tree with a random Yule-Harding
@@ -590,7 +1098,9 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     @return 0 on success, 1 if the tree/alignment couldn't be read
  */
 int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double radiusDecayPerStep = 0.0,
-        bool randomStart = false) {
+        bool randomStart = false, bool useFastSelection = false) {
+    double wallClockStart = getRealTime();
+
     // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
     string alnFile = trueTreeArg;
     const string suffix = ".treefile";
@@ -663,6 +1173,12 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         // as runLikelihood does after reading a tree from file
         tree.setAlignment(aln);
     }
+
+    // built once, O(n); kept in sync thereafter by applySPRTracked/
+    // rollbackSPRTracked, never rebuilt -- see EdgeRegistry's comment
+    EdgeRegistry edgeRegistry;
+    buildEdgeRegistry(tree, edgeRegistry);
+
     tree.setNumThreads(1);
     tree.setLikelihoodKernel(LK_SSE2);
 
@@ -701,6 +1217,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
     if (radiusDecayPerStep > 0.0)
         cout << "radius decay    : " << radiusDecayPerStep << " per step (min 1)" << endl;
     cout << "max steps       : " << maxSteps << endl;
+    if (useFastSelection)
+        cout << "selection       : fast (choosePrune/chooseGraft proposal, not exhaustive)" << endl;
 
     int step = 0;
     for (; step < maxSteps; step++) {
@@ -711,48 +1229,87 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
             : radius;
 
         PhyloNode *pruneNode, *pruneDad;
-        if (!pickRandomPruneEdge(tree, pruneNode, pruneDad)) {
+        if (!choosePrune(tree, edgeRegistry, pruneNode, pruneDad)) {
             cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
             step++;
             break;
         }
 
-        vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, stepRadius);
-        if (candidates.empty()) {
-            cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
-                 << describeEdgeCompact(pruneNode, pruneDad) << "}"
-                 << " -- no legal graft candidates; skipping." << endl;
-            continue;
-        }
+        PhyloNode *bestNode, *bestDad;
+        int bestDistance;
+        double bestScore;
 
-        // score every candidate on the SAME tree object via apply -> score
-        // -> rollback; never allocate a new tree per candidate
-        double bestScore = -DBL_MAX;
-        GraftCandidate bestCandidate = candidates[0];
-        for (size_t i = 0; i < candidates.size(); i++) {
-            const GraftCandidate &c = candidates[i];
+        if (useFastSelection) {
+            // O(distance) proposal: one candidate from chooseGraft's random
+            // walk, applied/scored/rolled-back just like each of the
+            // exhaustive branch's many candidates below, just only once
+            int walkLength;
+            if (!chooseGraft(tree, pruneNode, pruneDad, stepRadius, bestNode, bestDad, &walkLength)) {
+                cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                     << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                     << " -- no legal graft target; skipping." << endl;
+                continue;
+            }
+            bestDistance = walkLength;
+
             SPRMove move;
             move.prune_node = pruneNode;
             move.prune_dad = pruneDad;
-            move.regraft_node = c.node;
-            move.regraft_dad = c.dad;
-            move.radius = c.radius;
+            move.regraft_node = bestNode;
+            move.regraft_dad = bestDad;
+            move.radius = walkLength;
             move.screening_score = 0.0;
             move.exact_score = 0.0;
-            move.candidate_id = (int) i;
+            move.candidate_id = 0;
             move.generation = step;
 
             SPRRollback rollback;
             tree.applySPR(move, rollback);
             resetLikelihoodBuffers(tree);
-            double score = tree.computeLikelihood();
+            bestScore = tree.computeLikelihood();
             tree.rollbackSPR(rollback);
             resetLikelihoodBuffers(tree);
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestCandidate = c;
+        } else {
+            vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, stepRadius);
+            if (candidates.empty()) {
+                cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                     << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                     << " -- no legal graft candidates; skipping." << endl;
+                continue;
             }
+
+            // score every candidate on the SAME tree object via apply ->
+            // score -> rollback; never allocate a new tree per candidate
+            bestScore = -DBL_MAX;
+            GraftCandidate bestCandidate = candidates[0];
+            for (size_t i = 0; i < candidates.size(); i++) {
+                const GraftCandidate &c = candidates[i];
+                SPRMove move;
+                move.prune_node = pruneNode;
+                move.prune_dad = pruneDad;
+                move.regraft_node = c.node;
+                move.regraft_dad = c.dad;
+                move.radius = c.radius;
+                move.screening_score = 0.0;
+                move.exact_score = 0.0;
+                move.candidate_id = (int) i;
+                move.generation = step;
+
+                SPRRollback rollback;
+                tree.applySPR(move, rollback);
+                resetLikelihoodBuffers(tree);
+                double score = tree.computeLikelihood();
+                tree.rollbackSPR(rollback);
+                resetLikelihoodBuffers(tree);
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCandidate = c;
+                }
+            }
+            bestNode = bestCandidate.node;
+            bestDad = bestCandidate.dad;
+            bestDistance = bestCandidate.radius;
         }
 
         // apply the winning candidate for real, once, to decide whether to
@@ -760,30 +1317,30 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         SPRMove bestMove;
         bestMove.prune_node = pruneNode;
         bestMove.prune_dad = pruneDad;
-        bestMove.regraft_node = bestCandidate.node;
-        bestMove.regraft_dad = bestCandidate.dad;
-        bestMove.radius = bestCandidate.radius;
+        bestMove.regraft_node = bestNode;
+        bestMove.regraft_dad = bestDad;
+        bestMove.radius = bestDistance;
         bestMove.screening_score = 0.0;
         bestMove.exact_score = bestScore;
         bestMove.candidate_id = 0;
         bestMove.generation = step;
 
-        SPRRollback bestRollback;
-        tree.applySPR(bestMove, bestRollback);
+        TrackedSPR bestTracked;
+        applySPRTracked(tree, edgeRegistry, bestMove, bestTracked);
         resetLikelihoodBuffers(tree);
 
         bool improved = bestScore > curScore;
         cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
              << describeEdgeCompact(pruneNode, pruneDad) << "}"
-             << " -> graft {" << describeEdgeCompact(bestCandidate.node, bestCandidate.dad) << "}"
-             << " (distance " << bestCandidate.radius << ")"
+             << " -> graft {" << describeEdgeCompact(bestNode, bestDad) << "}"
+             << " (" << (useFastSelection ? "d=" : "distance ") << bestDistance << ")"
              << ", logL " << bestScore << " (cur " << curScore << ")"
              << (improved ? " [kept]" : " [reverted]") << endl;
 
         if (improved) {
             curScore = bestScore;
         } else {
-            tree.rollbackSPR(bestRollback);
+            rollbackSPRTracked(tree, edgeRegistry, bestTracked);
             resetLikelihoodBuffers(tree);
         }
     }
@@ -812,6 +1369,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
     } else {
         cerr << "warning: could not write to output.txt" << endl;
     }
+
+    cout << "time elapsed    : " << fixed << setprecision(2) << (getRealTime() - wallClockStart)
+         << " sec" << endl;
 
     delete aln;
     return 0;
@@ -942,7 +1502,7 @@ void printUsage(const char *prog) {
     cerr << "      plain JC model. Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps>" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -950,14 +1510,19 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt. Append the literal word 'random' to start from a random" << endl;
-    cerr << "      Yule-Harding topology instead of the default BioNJ estimate tree." << endl;
+    cerr << "      output.txt. Two optional trailing flags, in either order:" << endl;
+    cerr << "        random  start from a random Yule-Harding topology instead of the" << endl;
+    cerr << "                default BioNJ estimate tree" << endl;
+    cerr << "        fast    pick each step's prune edge via choosePrune() and its regraft" << endl;
+    cerr << "                target via chooseGraft() -- an O(1)/O(distance) random proposal" << endl;
+    cerr << "                that's applied and kept-or-reverted directly, instead of" << endl;
+    cerr << "                enumerating and scoring every candidate in the radius" << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay>" << endl;
+    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast]" << endl;
     cerr << "      same search as --hillclimb, but the radius shrinks by <decay> each step" << endl;
     cerr << "      (step i uses radius = max(1, ceil(<radius> - <decay> * i)) instead of a" << endl;
-    cerr << "      fixed <radius> for every step). Also accepts a trailing 'random' argument," << endl;
-    cerr << "      same as --hillclimb." << endl;
+    cerr << "      fixed <radius> for every step). Accepts the same trailing 'random' and" << endl;
+    cerr << "      'fast' flags as --hillclimb, in either order." << endl;
     cerr << endl;
     cerr << "  In the move/list-grafts forms, an edge is a comma-separated leaf name list:" << endl;
     cerr << "    a single leaf, e.g. C         -> that leaf's own pendant edge" << endl;
@@ -971,10 +1536,37 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --likelihood tree.nwk aln.fasta    (evaluate likelihood)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20      (hill-climb search)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random   (random Yule-Harding start tree)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 3 20 fast     (O(1)/O(distance) proposal search)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random fast   (both, in either order)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5  (hill-climb, shrinking radius)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 random  (same, random start tree)" << endl;
+    cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 fast    (same, proposal search)" << endl;
     cerr << endl;
     cerr << "  Full reference: tree/spr_topology_test_usage.txt" << endl;
+}
+
+/**
+    parse the trailing optional flags shared by --hillclimb and
+    --hillclimb-decay: the literal words "random" and "fast", in either
+    order, each at most once. argv[fromIndex..argc-1] must consist of
+    exactly these (in any combination); anything else (typos, duplicates,
+    unrelated tokens) is treated as a parse failure so main() falls through
+    to printUsage() rather than silently ignoring a misspelled flag.
+    @return false if any trailing argument isn't recognized
+ */
+bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection) {
+    randomStart = false;
+    useFastSelection = false;
+    for (int i = fromIndex; i < argc; i++) {
+        string arg = argv[i];
+        if (arg == "random" && !randomStart)
+            randomStart = true;
+        else if (arg == "fast" && !useFastSelection)
+            useFastSelection = true;
+        else
+            return false;
+    }
+    return true;
 }
 
 int main(int argc, char **argv) {
@@ -985,14 +1577,16 @@ int main(int argc, char **argv) {
     // exactly 4 arguments and would otherwise be misread as a move command
     if (argc == 5 && string(argv[1]) == "--list-grafts")
         return runListGrafts(argv[2], argv[3], atoi(argv[4]));
-    if (argc == 5 && string(argv[1]) == "--hillclimb")
-        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]));
-    if (argc == 6 && string(argv[1]) == "--hillclimb" && string(argv[5]) == "random")
-        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, true);
-    if (argc == 6 && string(argv[1]) == "--hillclimb-decay")
-        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]));
-    if (argc == 7 && string(argv[1]) == "--hillclimb-decay" && string(argv[6]) == "random")
-        return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]), true);
+    if (argc >= 5 && string(argv[1]) == "--hillclimb") {
+        bool randomStart, useFastSelection;
+        if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection))
+            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, randomStart, useFastSelection);
+    }
+    if (argc >= 6 && string(argv[1]) == "--hillclimb-decay") {
+        bool randomStart, useFastSelection;
+        if (parseHillClimbFlags(argc, argv, 6, randomStart, useFastSelection))
+            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]), randomStart, useFastSelection);
+    }
     if (argc == 4 && string(argv[1]) == "--likelihood")
         return runLikelihood(argv[2], argv[3]);
     if (argc == 4)

@@ -146,7 +146,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random]
+    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast]
 
     First, generate a ground-truth tree and a DNA alignment simulated along
     it with the real iqtree3 binary's built-in AliSim feature (this needs
@@ -174,17 +174,26 @@ Tree argument convention (used by every command that takes a tree):
          the search (algorithm, output, exit codes) is unchanged -- only
          where the search starts differs.
       2. Repeat, up to <max-steps> times:
-           a. pick one uniformly random prune edge (a random degree-3 node,
-              then a random one of its 3 neighbors)
-           b. enumerate every distinct, legal regraft candidate within
-              <radius> hops of that prune point (same engine as
-              --list-grafts)
-           c. score every candidate on ONE tree object via
-              applySPR -> computeLikelihood -> rollbackSPR -- no candidate
-              ever gets its own copy of the tree
-           d. apply the single best-scoring candidate for real and print
-              the resulting tree
-           e. if its likelihood beats the current tree, keep the move;
+           a. pick one uniformly random prune edge via choosePrune() -- an
+              O(1) pick from an EdgeRegistry built once alongside the tree
+              and kept incrementally in sync with every move thereafter, no
+              per-step traversal needed
+           b. pick a regraft target one of two ways, depending on whether
+              "fast" was given (see below):
+                default: enumerate every distinct, legal regraft candidate
+                within <radius> hops of that prune point (same engine as
+                --list-grafts), score every one on ONE tree object via
+                applySPR -> computeLikelihood -> rollbackSPR (no candidate
+                ever gets its own copy of the tree), and keep whichever
+                scored best
+                "fast": pick a single candidate via chooseGraft() -- a
+                weighted-random-distance walk outward from the prune point,
+                O(distance walked) rather than O(candidates within radius),
+                and use it directly (no scoring against alternatives, since
+                there's only the one)
+           c. apply that candidate for real (still via applySPR, on the
+              same tree object) and print the resulting tree
+           d. if its likelihood beats the current tree, keep the move;
               otherwise roll it back
          Either way, move on to the next step with whatever tree is
          current (the improved one if the move was kept, the original one
@@ -192,9 +201,19 @@ Tree argument convention (used by every command that takes a tree):
          the search, it just tries a new random prune point next.
       3. Stop early (before <max-steps>) only if a chosen prune edge has no
          degree-3 node left to prune from at all (topology exhausted). A
-         step with zero legal candidates within the radius, or whose best
-         candidate doesn't improve on the current likelihood, still counts
-         as a completed step and the search continues to the next one.
+         step with zero legal candidates (default) or no legal graft target
+         at all (fast; only possible on a 3-leaf tree), or whose candidate
+         doesn't improve on the current likelihood, still counts as a
+         completed step and the search continues to the next one.
+
+    The default (exhaustive) mode is a steepest-descent-within-radius
+    search: it always finds the single best move available within
+    <radius>, at the cost of scoring every candidate in that neighborhood
+    every step. Appending "fast" switches to a proposal-based random walk
+    instead: one candidate per step, accepted if it improves and reverted
+    otherwise, at O(1)/O(distance) cost per step rather than O(radius) --
+    trading the guarantee of finding the best move in the radius for much
+    cheaper steps, closer to a stochastic hill-climb than steepest descent.
 
     On completion, prints the Robinson-Foulds (RF) distance between the
     original AliSim tree and the final searched tree to the terminal, and
@@ -214,11 +233,13 @@ Tree argument convention (used by every command that takes a tree):
     Examples:
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random fast
 
 
 6) Greedy randomized SPR hill-climbing search with a decaying radius
 ------------------------------------------------------------------------
-    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random]
+    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast]
 
     Identical to --hillclimb (command 5 above; same input files, same
     algorithm, same output, same exit codes) except the regraft search
@@ -238,18 +259,25 @@ Tree argument convention (used by every command that takes a tree):
     thin CLI layer on top of the same runHillClimb() implementation, it is
     not a separate search).
 
-    When a step's shrunken radius yields zero legal graft candidates, that
-    step is skipped exactly like a zero-candidate step in plain
-    --hillclimb (see command 5, algorithm step 2 and its "stop early"
-    paragraph) -- it does not end the search early by itself.
+    When a step's shrunken radius yields zero legal graft candidates (or,
+    under "fast", no legal graft target at all), that step is skipped
+    exactly like the same situation in plain --hillclimb (see command 5,
+    algorithm step 2 and its "stop early" paragraph) -- it does not end the
+    search early by itself. Under "fast", the shrinking radius instead
+    caps chooseGraft's own maximum walk distance each step.
 
-    Also accepts a trailing "random" argument, same as --hillclimb (see
-    command 5, algorithm step 1): starts from a random Yule-Harding
-    topology instead of the BioNJ estimate tree.
+    Also accepts the same trailing "random" and "fast" arguments as
+    --hillclimb, in either order (see command 5, algorithm steps 1-2):
+    "random" starts from a random Yule-Harding topology instead of the
+    BioNJ estimate tree; "fast" picks each step's regraft target via
+    chooseGraft()'s O(distance) random walk instead of exhaustively scoring
+    every candidate in the radius.
 
     Examples:
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 random
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 fast
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 random fast
 
 
 Generating input data with AliSim
