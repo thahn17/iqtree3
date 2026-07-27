@@ -1090,6 +1090,18 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     starting point. Branch lengths on this random topology come from
     generateRandomTree's own random assignment, not from the alignment.
 
+    quiet (default false) suppresses the one printed line per step (prune
+    edge, graft target, logL, kept/reverted -- or the "no candidates"/
+    "stopping" messages in their place). This is not just cosmetic: each
+    line ends with endl, which flushes -- with max-steps in the thousands,
+    an interactive console that's slow to render that much output (a
+    classic Windows console/PowerShell window is far more prone to this
+    than Windows Terminal or a Unix-style pipe) can end up stalling on
+    those flushes, inflating wall-clock time well beyond actual compute
+    time. quiet removes the per-step writes entirely; the setup header and
+    the final summary (finished/final tree/RF distance/time elapsed) are
+    unaffected either way.
+
     On completion, prints the Robinson-Foulds distance between the
     original AliSim tree and the final tree to the terminal, and writes
     both trees plus the RF distance to output.txt (repo root, overwritten
@@ -1098,7 +1110,7 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     @return 0 on success, 1 if the tree/alignment couldn't be read
  */
 int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double radiusDecayPerStep = 0.0,
-        bool randomStart = false, bool useFastSelection = false) {
+        bool randomStart = false, bool useFastSelection = false, bool quiet = false) {
     double wallClockStart = getRealTime();
 
     // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
@@ -1230,7 +1242,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
 
         PhyloNode *pruneNode, *pruneDad;
         if (!choosePrune(tree, edgeRegistry, pruneNode, pruneDad)) {
-            cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
+            if (!quiet)
+                cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
             step++;
             break;
         }
@@ -1245,9 +1258,10 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
             // exhaustive branch's many candidates below, just only once
             int walkLength;
             if (!chooseGraft(tree, pruneNode, pruneDad, stepRadius, bestNode, bestDad, &walkLength)) {
-                cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
-                     << describeEdgeCompact(pruneNode, pruneDad) << "}"
-                     << " -- no legal graft target; skipping." << endl;
+                if (!quiet)
+                    cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                         << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                         << " -- no legal graft target; skipping." << endl;
                 continue;
             }
             bestDistance = walkLength;
@@ -1272,9 +1286,10 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         } else {
             vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, stepRadius);
             if (candidates.empty()) {
-                cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
-                     << describeEdgeCompact(pruneNode, pruneDad) << "}"
-                     << " -- no legal graft candidates; skipping." << endl;
+                if (!quiet)
+                    cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                         << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                         << " -- no legal graft candidates; skipping." << endl;
                 continue;
             }
 
@@ -1330,12 +1345,13 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         resetLikelihoodBuffers(tree);
 
         bool improved = bestScore > curScore;
-        cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
-             << describeEdgeCompact(pruneNode, pruneDad) << "}"
-             << " -> graft {" << describeEdgeCompact(bestNode, bestDad) << "}"
-             << " (" << (useFastSelection ? "d=" : "distance ") << bestDistance << ")"
-             << ", logL " << bestScore << " (cur " << curScore << ")"
-             << (improved ? " [kept]" : " [reverted]") << endl;
+        if (!quiet)
+            cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                 << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                 << " -> graft {" << describeEdgeCompact(bestNode, bestDad) << "}"
+                 << " (" << (useFastSelection ? "d=" : "distance ") << bestDistance << ")"
+                 << ", logL " << bestScore << " (cur " << curScore << ")"
+                 << (improved ? " [kept]" : " [reverted]") << endl;
 
         if (improved) {
             curScore = bestScore;
@@ -1345,7 +1361,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         }
     }
 
-    cout << endl << "=== finished after " << step << " step(s) ===" << endl;
+    if (!quiet)
+        cout << endl;
+    cout << "=== finished after " << step << " step(s) ===" << endl;
     string finalTreeNewick = newickOf(tree);
     cout << "final tree (logL = " << curScore << "): " << finalTreeNewick << endl;
     cout << "AliSim true tree logL: " << trueTreeLogl << endl;
@@ -1502,7 +1520,7 @@ void printUsage(const char *prog) {
     cerr << "      plain JC model. Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast] [quiet]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -1510,19 +1528,23 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt. Two optional trailing flags, in either order:" << endl;
+    cerr << "      output.txt. Three optional trailing flags, in any order:" << endl;
     cerr << "        random  start from a random Yule-Harding topology instead of the" << endl;
     cerr << "                default BioNJ estimate tree" << endl;
     cerr << "        fast    pick each step's prune edge via choosePrune() and its regraft" << endl;
     cerr << "                target via chooseGraft() -- an O(1)/O(distance) random proposal" << endl;
     cerr << "                that's applied and kept-or-reverted directly, instead of" << endl;
     cerr << "                enumerating and scoring every candidate in the radius" << endl;
+    cerr << "        quiet   suppress the one printed line per step; only the setup header" << endl;
+    cerr << "                and final summary (final tree, RF distance, time elapsed) are" << endl;
+    cerr << "                printed. With max-steps in the thousands, this also avoids the" << endl;
+    cerr << "                per-line flush stalling on a slow interactive console" << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast]" << endl;
+    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast] [quiet]" << endl;
     cerr << "      same search as --hillclimb, but the radius shrinks by <decay> each step" << endl;
     cerr << "      (step i uses radius = max(1, ceil(<radius> - <decay> * i)) instead of a" << endl;
-    cerr << "      fixed <radius> for every step). Accepts the same trailing 'random' and" << endl;
-    cerr << "      'fast' flags as --hillclimb, in either order." << endl;
+    cerr << "      fixed <radius> for every step). Accepts the same trailing 'random', 'fast'," << endl;
+    cerr << "      and 'quiet' flags as --hillclimb, in any order." << endl;
     cerr << endl;
     cerr << "  In the move/list-grafts forms, an edge is a comma-separated leaf name list:" << endl;
     cerr << "    a single leaf, e.g. C         -> that leaf's own pendant edge" << endl;
@@ -1538,6 +1560,7 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random   (random Yule-Harding start tree)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 fast     (O(1)/O(distance) proposal search)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random fast   (both, in either order)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 6 18000 fast quiet (many steps, no per-step spam)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5  (hill-climb, shrinking radius)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 random  (same, random start tree)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 fast    (same, proposal search)" << endl;
@@ -1547,22 +1570,26 @@ void printUsage(const char *prog) {
 
 /**
     parse the trailing optional flags shared by --hillclimb and
-    --hillclimb-decay: the literal words "random" and "fast", in either
-    order, each at most once. argv[fromIndex..argc-1] must consist of
+    --hillclimb-decay: the literal words "random", "fast", and "quiet", in
+    any order, each at most once. argv[fromIndex..argc-1] must consist of
     exactly these (in any combination); anything else (typos, duplicates,
     unrelated tokens) is treated as a parse failure so main() falls through
     to printUsage() rather than silently ignoring a misspelled flag.
     @return false if any trailing argument isn't recognized
  */
-bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection) {
+bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
+        bool &quiet) {
     randomStart = false;
     useFastSelection = false;
+    quiet = false;
     for (int i = fromIndex; i < argc; i++) {
         string arg = argv[i];
         if (arg == "random" && !randomStart)
             randomStart = true;
         else if (arg == "fast" && !useFastSelection)
             useFastSelection = true;
+        else if (arg == "quiet" && !quiet)
+            quiet = true;
         else
             return false;
     }
@@ -1578,14 +1605,15 @@ int main(int argc, char **argv) {
     if (argc == 5 && string(argv[1]) == "--list-grafts")
         return runListGrafts(argv[2], argv[3], atoi(argv[4]));
     if (argc >= 5 && string(argv[1]) == "--hillclimb") {
-        bool randomStart, useFastSelection;
-        if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection))
-            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, randomStart, useFastSelection);
+        bool randomStart, useFastSelection, quiet;
+        if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet))
+            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, randomStart, useFastSelection, quiet);
     }
     if (argc >= 6 && string(argv[1]) == "--hillclimb-decay") {
-        bool randomStart, useFastSelection;
-        if (parseHillClimbFlags(argc, argv, 6, randomStart, useFastSelection))
-            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]), randomStart, useFastSelection);
+        bool randomStart, useFastSelection, quiet;
+        if (parseHillClimbFlags(argc, argv, 6, randomStart, useFastSelection, quiet))
+            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]), randomStart, useFastSelection,
+                    quiet);
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")
         return runLikelihood(argv[2], argv[3]);
