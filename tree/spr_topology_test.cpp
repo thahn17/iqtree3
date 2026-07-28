@@ -109,6 +109,31 @@ PhyloNode* findLCA(PhyloNode *a, PhyloNode *b, ParentMap &parent, DepthMap &node
 }
 
 /**
+    full-precision Newick text for the subtree hanging off `node`, away from
+    `dad` (dad may be nullptr, meaning "no direction is excluded" -- correct
+    when node is tree.root itself, which has only one neighbor to begin
+    with). Unlike newickOf() elsewhere in this file, branch lengths are NOT
+    rounded to 1 decimal place -- that rounding is a display-only nicety and
+    would bias the actual likelihood computation this text feeds.
+ */
+void writeFullPrecisionNewick(ostream &out, PhyloNode *node, PhyloNode *dad) {
+    if (node->isLeaf()) {
+        out << node->name;
+        return;
+    }
+    out << "(";
+    bool first = true;
+    FOR_NEIGHBOR_IT(node, dad, it) {
+        if (!first)
+            out << ",";
+        first = false;
+        writeFullPrecisionNewick(out, (PhyloNode*) (*it)->node, node);
+        out << ":" << (*it)->length;
+    }
+    out << ")";
+}
+
+/**
     split a comma-separated leaf list, trimming whitespace around each name
  */
 vector<string> splitLeafList(const string &spec) {
@@ -833,6 +858,259 @@ void resetLikelihoodBuffers(PhyloTree &tree) {
     tree.initializeAllPartialLh();
 }
 
+/**
+    invalidate cached partial parsimony vectors after a topology change, for
+    exactly the same reason resetLikelihoodBuffers exists: parsimony
+    partials use the identical per-Neighbor "already computed" bit-flag
+    caching as likelihood partials (see computePartialParsimonyFast's
+    `partial_lh_computed & 2` check in phylotreepars.cpp), so the same
+    stale-buffer risk after a long-distance SPR jump applies here too.
+
+    tree.initializeAllPartialPars() alone is sufficient (unlike the
+    likelihood case, no separate delete step is needed): it reallocates
+    central_partial_pars only if resetLikelihoodBuffers has already freed
+    it (deleteAllPartialLh frees central_partial_pars too, since the two
+    buffer types share that lifecycle), re-derives every Neighbor's
+    partial_pars pointer either way, and its own trailing call to
+    clearAllPartialLH() resets the "already computed" flag (both the
+    likelihood and parsimony bits) on every Neighbor -- exactly the
+    invalidation this needs.
+ */
+void resetParsimonyBuffers(PhyloTree &tree) {
+    tree.initializeAllPartialPars();
+}
+
+/**
+    dad1's other two neighbors, BEFORE an SPR move is applied to
+    (node1, dad1) -- these are exactly the two nodes that end up directly
+    connected to each other once dad1 is bypassed (see applySPR's own
+    logic in phylotree.cpp: sibling1->updateNeighbor(dad1, sibling2, ...)
+    and vice versa). Needed by scoreTrialSPRMove's branch-length
+    reoptimization below, to name the third touched edge (the merged
+    sibling1-sibling2 edge) that SPRMove itself doesn't otherwise
+    identify; the test tool has no other way to name these two nodes once
+    the move has already been applied -- SPRRollback records enough
+    per-Neighbor state to UNDO a move, but never exposes which NODE owned
+    which saved Neighbor.
+ */
+void findSPRSiblings(PhyloNode *node1, PhyloNode *dad1, PhyloNode *&sibling1, PhyloNode *&sibling2) {
+    sibling1 = sibling2 = nullptr;
+    FOR_NEIGHBOR_DECLARE(dad1, node1, it) {
+        if (!sibling1)
+            sibling1 = (PhyloNode*) (*it)->node;
+        else
+            sibling2 = (PhyloNode*) (*it)->node;
+    }
+}
+
+/**
+    apply `move` as a trial, score it, and always roll it back (the
+    caller decides afterward whether to actually keep it for real, via
+    applySPRTracked). If reoptimizeBranchLengths is set, the three edges
+    an SPR move actually changes -- the two split halves of the target
+    edge at the new attachment point (prune_dad-regraft_dad,
+    prune_dad-regraft_node) and the merged edge left behind at the
+    vacated attachment point (sibling1-sibling2) -- are each re-optimized
+    via optimizeOneBranch() (Newton-Raphson, same as
+    PhyloTree::getBestNNIForBran does for the branches it touches) before
+    the final score is taken, instead of just trusting applySPR's own
+    naive placeholder lengths (half the target edge's length split
+    evenly, and the sum of the two vacated edges' lengths -- see
+    applySPR's own comment in phylotree.cpp). This can only ever improve
+    (or leave unchanged) the likelihood for a given topology, since it's
+    searching the exact same space optimizeOneBranch always searches, and
+    turns the previously-reported score for a topology from "whatever the
+    naive placeholder lengths happen to give" into an actual (locally)
+    likelihood-optimal set of lengths for those three edges -- closer to
+    what a real ML search would report for the same topology.
+
+    Deliberately built on the tool's original resetLikelihoodBuffers()
+    (full delete+reinit) rather than the selective, incremental
+    invalidation tried and abandoned above scoreTrialSPRMove's own
+    definition: optimizeOneBranch's default clearLH=true already performs
+    its own correct, cascading invalidation internally (the exact
+    mechanism NNI itself relies on), so as long as this starts from a
+    known-fully-valid state (one plain computeLikelihood() call,
+    immediately after applySPR) there is no need to hand-manage buffer
+    invalidation here at all, and thus no repeat of the LM_PER_NODE
+    buffer-pool crash that ended that attempt.
+ */
+/**
+    optimizeOneBranch() asserts its branch's CURRENT length is >= 0 before
+    searching for a better one; BioNJ (a distance-based method) can and
+    does sometimes produce a zero or slightly negative branch length
+    estimate (a well-known artifact of neighbor-joining-family methods on
+    noisy distance matrices), and applySPR's own naive length arithmetic
+    (summing/halving whatever length was already there) only preserves
+    that sign, never corrects it. Clamp both directions of (a,b) up to
+    the model's own minimum branch length first so the precondition
+    always holds, regardless of what the naive placeholder length was.
+ */
+void clampBranchLengthForOptimization(PhyloNode *a, PhyloNode *b, double minLen) {
+    Neighbor *ab = a->findNeighbor(b);
+    Neighbor *ba = b->findNeighbor(a);
+    if (ab->length < minLen)
+        ab->length = minLen;
+    if (ba->length < minLen)
+        ba->length = minLen;
+}
+
+double scoreTrialSPRMove(PhyloTree &tree, const SPRMove &move, bool reoptimizeBranchLengths) {
+    PhyloNode *sibling1 = nullptr, *sibling2 = nullptr;
+    if (reoptimizeBranchLengths)
+        findSPRSiblings(move.prune_node, move.prune_dad, sibling1, sibling2);
+
+    SPRRollback rollback;
+    tree.applySPR(move, rollback);
+    resetLikelihoodBuffers(tree);
+    double score = tree.computeLikelihood();
+
+    if (reoptimizeBranchLengths) {
+        const int maxNRStep = 10; // matches NNI_MAX_NR_STEP's default, utils/pllnni.cpp
+        double minLen = Params::getInstance().min_branch_length;
+
+        clampBranchLengthForOptimization(move.prune_dad, move.regraft_dad, minLen);
+        tree.optimizeOneBranch(move.prune_dad, move.regraft_dad, true, maxNRStep);
+
+        clampBranchLengthForOptimization(move.prune_dad, move.regraft_node, minLen);
+        tree.optimizeOneBranch(move.prune_dad, move.regraft_node, true, maxNRStep);
+
+        clampBranchLengthForOptimization(sibling1, sibling2, minLen);
+        tree.optimizeOneBranch(sibling1, sibling2, true, maxNRStep);
+
+        resetLikelihoodBuffers(tree);
+        score = tree.computeLikelihood();
+    }
+
+    tree.rollbackSPR(rollback);
+    resetLikelihoodBuffers(tree);
+    return score;
+}
+
+// A second attempt at speeding up per-candidate trial scoring (beyond the
+// standalone-tree subtree-likelihood attempt below) was tried and reverted:
+// instead of a full resetLikelihoodBuffers() (delete+reinit of every
+// partial-likelihood buffer) around each trial apply/rollback, clear only
+// the 7 PhyloNeighbor directions an SPR move can possibly touch (the merged
+// edge left behind at the vacated attachment point, plus the two split
+// halves of the target edge at the new attachment point) via the PUBLIC
+// clearPartialLh(), then evaluate computeLikelihoodBranch() anchored right
+// at the graft point instead of at the tree's fixed root -- mathematically
+// identical for a reversible, stationary model, and exactly the technique
+// IQ-TREE's own NNI search already uses safely (see getBestNNIForBran,
+// phylotree.cpp). Unlike the subtree-likelihood attempt, this never
+// fabricated any data or bypassed buffer bookkeeping -- it only marked real
+// data as "needs recomputing", the same operation NNI performs.
+// It still crashed (phylotree.cpp's reorientPartialLh assertion), for a
+// related but distinct reason: IQ-TREE's default memory mode (LM_PER_NODE)
+// gives each NODE a small shared pool of buffers, not one per possible
+// neighbor-direction, on the assumption that at most one direction is
+// "away and uncomputed" at a time. An SPR move's dad1 sits at the junction
+// of two of the three touched edges (dad1-dad2 and dad1-node2), so clearing
+// both simultaneously asks dad1 for two uncomputed buffers at once --
+// apparently more than its pool provides, with no sibling buffer available
+// to steal via reorientPartialLh's usual takeover logic. NNI never hits
+// this because it only ever touches one swapped branch (or processes
+// adjacent branches strictly one at a time). Making this safe would need
+// either a strictly sequential, NNI-style one-direction-at-a-time
+// restructuring, or a deeper look at IQ-TREE's mem_slots sizing -- judged
+// not worth pursuing further after a second confirmed crash in this same
+// class of internal buffer-management constraint.
+
+// A faster, direct-on-the-big-tree alternative to the standalone-tree
+// subtree likelihood below was attempted and reverted. The idea: for a
+// reversible, stationary model, freq . P(t) = freq for any branch length t
+// (the stationary distribution is a fixed point of the transition matrix),
+// so substituting the model's own state frequencies for "everything beyond
+// dad" on one side of the (lca, lcaDad) branch, then calling the tree's
+// ordinary computeLikelihoodBranch(), should mathematically collapse to
+// exactly the local clade's own likelihood -- verified correct on the
+// first call (a sane, correctly-scaled logL). It crashed on a second call
+// to the same node, however: IQ-TREE's default memory mode (LM_PER_NODE,
+// see PhyloTree::reorientPartialLh in phylotree.cpp) treats partial-
+// likelihood buffers as a SHARED POOL PER NODE, reassigned ("reoriented")
+// between neighbor-directions on demand, not one dedicated buffer per
+// direction. Permanently pinning one direction's buffer with substituted
+// content (as this approach requires) starves that pool, and a later,
+// legitimate computation elsewhere at the same node can find no buffer
+// left to reorient into, triggering an assertion failure. Making this
+// safe would require also driving IQ-TREE's `mem_slots` lock/unlock/
+// takeover bookkeeping to protect the substituted buffer from reorientation
+// -- a further layer of undocumented internals with the same risk profile,
+// judged not worth pursuing further here. See runRandomWalkSubtree's own
+// comment for the (correct, if slower) standalone-tree method actually
+// used, and its measured efficiency numbers.
+
+/**
+    how many extra parsimony substitutions a candidate is allowed to have,
+    beyond the CURRENT tree's own parsimony score, before it gets rejected
+    outright by the prescreen (see usePrescreen on runHillClimb) without
+    ever running the real, expensive likelihood check on it.
+
+    EXPERIMENTAL -- two rounds of testing against sim.treefile (~100
+    taxa/3000bp, JC model, exhaustive mode), and they don't fully agree,
+    which is itself the most honest thing to report here.
+
+    Round 1: tolerance = 0, 1, 2, 3, 5, 8, 15 (radius 6, 50 steps) and
+    0, 2, 5, 10, 20 (radius 15, 20 steps, repeated a few times). RF
+    distance showed no consistent trend with tolerance (noisy, ~50-76
+    throughout). Wall-clock time was consistently WORSE with prescreen on
+    than off at every tolerance tried (e.g. radius 15: ~23s with no
+    prescreen vs ~26-32s with it).
+
+    Round 2 (radius 10, 30 steps, 3 repeats per value, averaged):
+        no prescreen : avg 22.5s  (16.5-27.4s), avg RF 60.7
+        tolerance 0  : avg 25.5s  (24.4-26.1s), avg RF 67.3
+        tolerance 2  : avg 16.9s  (14.9-18.5s), avg RF 62.0
+        tolerance 5  : avg 24.6s  (22.4-26.8s), avg RF 65.3
+        tolerance 10 : avg 24.7s  (23.1-25.5s), avg RF 64.0
+        tolerance 20 : avg 22.4s  (20.0-26.1s), avg RF 62.7
+        tolerance 40 : avg 26.6s  (22.1-30.8s), avg RF 65.3
+    Here tolerance 2 was the clear outlier: consistently ~25% faster than
+    no-prescreen across all 3 repeats (its slowest rep was still faster
+    than every no-prescreen rep but one), for an RF cost of about +1.3
+    over baseline -- comfortably inside this search's own run-to-run RF
+    noise (~10-15 points). No other tolerance tested, including 0, showed
+    a similar speed advantage; most were flat or slower than baseline.
+
+    Given round 1 found no benefit at any tolerance and round 2 found a
+    real-looking benefit specifically at 2 (with only 3 repeats per value
+    and no fixed RNG seed, so this could still be a lucky draw of which
+    prune edges got picked), 2 is kept as the shipped default. It is the
+    only value with any empirical support across two rounds of testing,
+    but "3 repeats showed a 25% speedup once" is not strong evidence --
+    treat this as a reasonable starting point, not a settled result.
+    Retest with more repeats (and ideally a fixed seed) before relying on
+    it for anything real.
+
+    IMPORTANT CORRECTION, discovered while building runRandomWalk():
+    computeParsimony() silently returned 0 for every tree/candidate for
+    this entire file's history up to that point, because nsites in
+    computeParsimonyBranchFast() is derived from aln->num_parsimony_sites,
+    which stays 0 until Alignment::orderPatternByNumChars() is called --
+    a call IQ-TREE's real pipeline makes once per alignment (see
+    IQTree::doTreeSearch, iqtree.cpp) but this tool never did, for either
+    runHillClimb's prescreen or the code that produced the numbers above.
+    That means every one of the round 1/round 2 runs above was comparing
+    "0 > 0 + tolerance", which is false for every non-negative tolerance
+    -- prescreen never rejected a single candidate at any tolerance ever
+    tested. All those wall-clock/RF differences were pure RNG noise from
+    the search itself, not any effect of tolerance or of prescreen being
+    on vs off. This is now fixed (both here and in runHillClimb, which
+    now calls aln->orderPatternByNumChars(PAT_VARIANT) once before first
+    computing parsimony) -- computeParsimony() returns real, large,
+    sensibly-varying scores now. This makes prescreen an actual filter
+    for the first time, and means the round 1/round 2 conclusions above
+    should be discounted entirely, not treated as evidence for or against
+    any tolerance value. See runRandomWalk() for a fresh, unbiased look at
+    how parsimony difference actually relates to likelihood/RF difference
+    now that the bug is fixed; parsimonyPrescreenTolerance() itself has
+    NOT been retested against real (non-zero) parsimony scores yet.
+ */
+int parsimonyPrescreenTolerance() {
+    return 2;
+}
+
 } // namespace
 
 /**
@@ -879,11 +1157,11 @@ int runManualSPR(const string &treeArg, const string &pruneSpec, const string &r
 
     if (!resolveEdgeSpec(tree, pruneSpec, parent, nodeDepth, pruneNode, pruneDad, err)) {
         cerr << "error resolving prune edge '" << pruneSpec << "': " << err << endl;
-        return 1;
+        return 2;
     }
     if (!resolveEdgeSpec(tree, regraftSpec, parent, nodeDepth, regraftNode, regraftDad, err)) {
         cerr << "error resolving regraft edge '" << regraftSpec << "': " << err << endl;
-        return 1;
+        return 2;
     }
 
     SPRMove move;
@@ -907,14 +1185,14 @@ int runManualSPR(const string &treeArg, const string &pruneSpec, const string &r
         cout << "  (common causes: the two edges are the same or already adjacent; the regraft" << endl;
         cout << "   edge lies inside the subtree being pruned; or the far end of the prune edge" << endl;
         cout << "   is not a normal degree-3 internal node, e.g. it's the tree's arbitrary root)" << endl;
-        return 1;
+        return 2;
     }
 
     SPRRollback rollback;
     tree.applySPR(move, rollback);
 
     cout << "result tree : " << newickOf(tree) << endl;
-    return 0;
+    return 2;
 }
 
 /**
@@ -938,7 +1216,7 @@ int runListGrafts(const string &treeArg, const string &pruneSpec, int radius) {
     string err;
     if (!resolveEdgeSpec(tree, pruneSpec, parent, nodeDepth, pruneNode, pruneDad, err)) {
         cerr << "error resolving prune edge '" << pruneSpec << "': " << err << endl;
-        return 1;
+        return 2;
     }
 
     cout << "prune edge : above {" << pruneSpec << "}"
@@ -950,7 +1228,7 @@ int runListGrafts(const string &treeArg, const string &pruneSpec, int radius) {
 
     if (candidates.empty()) {
         cout << "no legal graft positions found within radius " << radius << endl;
-        return 0;
+        return 2;
     }
 
     cout << "found " << candidates.size() << " legal graft position(s):" << endl;
@@ -959,7 +1237,7 @@ int runListGrafts(const string &treeArg, const string &pruneSpec, int radius) {
         cout << "  [" << (i + 1) << "] radius " << c.radius << ": above {" << describeEdge(c.node, c.dad) << "}"
              << (c.node->isLeaf() ? " (pendant edge)" : " (internal edge)") << endl;
     }
-    return 0;
+    return 2;
 }
 
 /**
@@ -977,7 +1255,7 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     ifstream check(alignmentFile.c_str());
     if (!check.good()) {
         cerr << "error: cannot open alignment file '" << alignmentFile << "'" << endl;
-        return 1;
+        return 2;
     }
     check.close();
 
@@ -1024,7 +1302,7 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     cout << "log-likelihood: " << logl << endl;
 
     delete aln;
-    return 0;
+    return 2;
 }
 
 /**
@@ -1102,6 +1380,31 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     the final summary (finished/final tree/RF distance/time elapsed) are
     unaffected either way.
 
+    usePrescreen (default false) adds a cheap parsimony-based auto-reject
+    check before each candidate's real (expensive) likelihood evaluation,
+    in both useFastSelection and the exhaustive branch alike. Once per
+    step, before any candidate is generated, the CURRENT tree's parsimony
+    score is computed (computeParsimony() -- Fitch parsimony, plain bitwise
+    set operations over site patterns, no substitution-model math at all,
+    on the order of 1-2 magnitudes cheaper per call than
+    computeLikelihood()). Then, for each candidate considered (the single
+    one chooseGraft produces under useFastSelection, or each one
+    findGraftPositions returns otherwise): apply it, compute its own
+    post-move parsimony score the same cheap way, and roll back. If that
+    score is worse than the current tree's by more than
+    parsimonyPrescreenTolerance() substitutions, the candidate is rejected
+    right there -- it never touches computeLikelihood() at all. Only
+    candidates that pass this check get the real likelihood evaluation
+    (and, in the exhaustive branch, only those survivors are compared
+    against each other to find the best one). If every candidate in a
+    step gets rejected this way, that step is skipped exactly like a step
+    with zero legal candidates. This trades a chance of discarding a
+    candidate that would have actually improved the likelihood (parsimony
+    and likelihood don't always agree) for skipping the expensive check on
+    candidates that are unlikely to be worth it. See
+    parsimonyPrescreenTolerance's own comment for how that cutoff was
+    chosen -- it is explicitly experimental.
+
     On completion, prints the Robinson-Foulds distance between the
     original AliSim tree and the final tree to the terminal, and writes
     both trees plus the RF distance to output.txt (repo root, overwritten
@@ -1110,7 +1413,8 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     @return 0 on success, 1 if the tree/alignment couldn't be read
  */
 int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double radiusDecayPerStep = 0.0,
-        bool randomStart = false, bool useFastSelection = false, bool quiet = false) {
+        bool randomStart = false, bool useFastSelection = false, bool quiet = false, bool usePrescreen = false,
+        int numCandidates = 1, bool reoptimizeBranchLengths = false) {
     double wallClockStart = getRealTime();
 
     // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
@@ -1127,8 +1431,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         cerr << "error: could not find alignment '" << alnFile << "'" << endl;
         cerr << "  (derived from the tree argument by replacing '.treefile' with '.fa',"
                 " AliSim's own default output naming; generate a pair with e.g." << endl;
-        cerr << "   iqtree3 --alisim <prefix> -m GTR -t \"RANDOM{yh/20}\" --length 500)" << endl;
-        return 1;
+        cerr << "   iqtree3 --alisim <prefix> -m \"GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}\""
+                " -t \"RANDOM{yh/100}\" --length 10000)" << endl;
+        return 2;
     }
     alnCheck.close();
 
@@ -1192,6 +1497,15 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
     buildEdgeRegistry(tree, edgeRegistry);
 
     tree.setNumThreads(1);
+    if (reoptimizeBranchLengths)
+        // real Newton-Raphson branch-length search (see scoreTrialSPRMove)
+        // can legitimately push a branch length toward an extreme value
+        // while searching, which the plain (non-scaled) SSE kernel isn't
+        // built to handle without numerical underflow in the likelihood
+        // derivative -- exactly the scenario IQ-TREE's own "-safe" option
+        // exists for; the naive fixed-length scoring path never searches
+        // branch lengths at all, so it doesn't need this
+        params.lk_safe_scaling = true;
     tree.setLikelihoodKernel(LK_SSE2);
 
     string modelName = "JC";
@@ -1201,6 +1515,16 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
     tree.setModel(tree.getModelFactory()->model);
     tree.setRate(tree.getModelFactory()->site_rate);
     tree.initializeAllPartialLh();
+    if (usePrescreen) {
+        // computeParsimony() silently scores every site as 0 substitutions
+        // (nsites == 0 in computeParsimonyBranchFast) until aln's pattern
+        // order/count is set up this way -- IQ-TREE's own pipeline does
+        // this once per alignment (see IQTree::doTreeSearch, iqtree.cpp)
+        // before ever calling into parsimony; this tool must too
+        if (aln->ordered_pattern.empty())
+            aln->orderPatternByNumChars(PAT_VARIANT);
+        tree.initializeAllPartialPars();
+    }
 
     double curScore = tree.computeLikelihood();
 
@@ -1230,7 +1554,14 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
         cout << "radius decay    : " << radiusDecayPerStep << " per step (min 1)" << endl;
     cout << "max steps       : " << maxSteps << endl;
     if (useFastSelection)
-        cout << "selection       : fast (choosePrune/chooseGraft proposal, not exhaustive)" << endl;
+        cout << "selection       : fast (choosePrune/chooseGraft proposal, not exhaustive)"
+             << (numCandidates > 1 ? ", " + to_string(numCandidates) + " candidates/step" : "") << endl;
+    if (usePrescreen)
+        cout << "prescreen       : parsimony, tolerance " << parsimonyPrescreenTolerance()
+             << " (experimental)" << endl;
+    if (reoptimizeBranchLengths)
+        cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on each candidate's 3 "
+                "changed edges before scoring, experimental" << endl;
 
     int step = 0;
     for (; step < maxSteps; step++) {
@@ -1248,41 +1579,89 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
             break;
         }
 
+        // usePrescreen: the parsimony score of the tree as it stands right
+        // now, before this step's candidate(s) are even generated -- the
+        // baseline each candidate's own post-move parsimony score gets
+        // compared against below. Computed at most once per step,
+        // regardless of how many candidates there are.
+        int curParsimony = 0;
+        if (usePrescreen) {
+            resetParsimonyBuffers(tree);
+            curParsimony = tree.computeParsimony();
+        }
+
         PhyloNode *bestNode, *bestDad;
         int bestDistance;
         double bestScore;
 
         if (useFastSelection) {
-            // O(distance) proposal: one candidate from chooseGraft's random
-            // walk, applied/scored/rolled-back just like each of the
-            // exhaustive branch's many candidates below, just only once
-            int walkLength;
-            if (!chooseGraft(tree, pruneNode, pruneDad, stepRadius, bestNode, bestDad, &walkLength)) {
+            // O(distance) proposal: draw numCandidates independent
+            // candidates from chooseGraft's random walk, ALL from this
+            // same step's prune position, each applied/scored/rolled-back
+            // just like each of the exhaustive branch's many candidates
+            // below, and keep the best of the group. numCandidates == 1
+            // (plain "fast", the default) is exactly the original single-
+            // candidate behavior; "fast N" trades away some of fast
+            // mode's cheapness for a chance at a better move each step,
+            // without paying to score every candidate within the radius
+            // the way the exhaustive (non-fast) branch does.
+            bool haveBest = false;
+            bestScore = -DBL_MAX;
+            int drawsWithTarget = 0;
+            for (int c = 0; c < numCandidates; c++) {
+                PhyloNode *candNode, *candDad;
+                int walkLength;
+                if (!chooseGraft(tree, pruneNode, pruneDad, stepRadius, candNode, candDad, &walkLength))
+                    continue; // this draw found no legal target; try the next one
+                drawsWithTarget++;
+
+                SPRMove move;
+                move.prune_node = pruneNode;
+                move.prune_dad = pruneDad;
+                move.regraft_node = candNode;
+                move.regraft_dad = candDad;
+                move.radius = walkLength;
+                move.screening_score = 0.0;
+                move.exact_score = 0.0;
+                move.candidate_id = c;
+                move.generation = step;
+
+                if (usePrescreen) {
+                    // auto-reject this candidate on parsimony alone if
+                    // it's clearly worse than the tree already is -- skip
+                    // the expensive exact likelihood check entirely when so
+                    SPRRollback trialRollback;
+                    tree.applySPR(move, trialRollback);
+                    resetParsimonyBuffers(tree);
+                    int candidateParsimony = tree.computeParsimony();
+                    tree.rollbackSPR(trialRollback);
+                    resetParsimonyBuffers(tree);
+
+                    if (candidateParsimony > curParsimony + parsimonyPrescreenTolerance())
+                        continue; // rejected; never touches computeLikelihood()
+                }
+
+                double score = scoreTrialSPRMove(tree, move, reoptimizeBranchLengths);
+
+                if (!haveBest || score > bestScore) {
+                    bestScore = score;
+                    bestNode = candNode;
+                    bestDad = candDad;
+                    bestDistance = walkLength;
+                    haveBest = true;
+                }
+            }
+            if (!haveBest) {
                 if (!quiet)
                     cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
                          << describeEdgeCompact(pruneNode, pruneDad) << "}"
-                         << " -- no legal graft target; skipping." << endl;
+                         << (drawsWithTarget == 0
+                             ? " -- no legal graft target found in " + to_string(numCandidates) + " draw(s)"
+                             : " -- every drawn candidate rejected by parsimony prescreen ("
+                                 + to_string(drawsWithTarget) + "/" + to_string(numCandidates) + " had a target)")
+                         << "; skipping." << endl;
                 continue;
             }
-            bestDistance = walkLength;
-
-            SPRMove move;
-            move.prune_node = pruneNode;
-            move.prune_dad = pruneDad;
-            move.regraft_node = bestNode;
-            move.regraft_dad = bestDad;
-            move.radius = walkLength;
-            move.screening_score = 0.0;
-            move.exact_score = 0.0;
-            move.candidate_id = 0;
-            move.generation = step;
-
-            SPRRollback rollback;
-            tree.applySPR(move, rollback);
-            resetLikelihoodBuffers(tree);
-            bestScore = tree.computeLikelihood();
-            tree.rollbackSPR(rollback);
-            resetLikelihoodBuffers(tree);
         } else {
             vector<GraftCandidate> candidates = findGraftPositions(tree, pruneNode, pruneDad, stepRadius);
             if (candidates.empty()) {
@@ -1294,8 +1673,16 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
             }
 
             // score every candidate on the SAME tree object via apply ->
-            // score -> rollback; never allocate a new tree per candidate
+            // score -> rollback; never allocate a new tree per candidate.
+            // usePrescreen: before spending a full computeLikelihood() on
+            // a candidate, first auto-reject it on parsimony alone if it's
+            // clearly worse than the tree already is (same rule as the
+            // fast branch above, just applied to each of many candidates
+            // here instead of the sole one there) -- candidates that
+            // survive the prescreen are then compared against each other
+            // by real likelihood exactly as before.
             bestScore = -DBL_MAX;
+            bool haveBest = false;
             GraftCandidate bestCandidate = candidates[0];
             for (size_t i = 0; i < candidates.size(); i++) {
                 const GraftCandidate &c = candidates[i];
@@ -1310,17 +1697,32 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
                 move.candidate_id = (int) i;
                 move.generation = step;
 
-                SPRRollback rollback;
-                tree.applySPR(move, rollback);
-                resetLikelihoodBuffers(tree);
-                double score = tree.computeLikelihood();
-                tree.rollbackSPR(rollback);
-                resetLikelihoodBuffers(tree);
+                if (usePrescreen) {
+                    SPRRollback trialRollback;
+                    tree.applySPR(move, trialRollback);
+                    resetParsimonyBuffers(tree);
+                    int candidateParsimony = tree.computeParsimony();
+                    tree.rollbackSPR(trialRollback);
+                    resetParsimonyBuffers(tree);
 
-                if (score > bestScore) {
+                    if (candidateParsimony > curParsimony + parsimonyPrescreenTolerance())
+                        continue; // rejected; never touches computeLikelihood()
+                }
+
+                double score = scoreTrialSPRMove(tree, move, reoptimizeBranchLengths);
+
+                if (!haveBest || score > bestScore) {
                     bestScore = score;
                     bestCandidate = c;
+                    haveBest = true;
                 }
+            }
+            if (!haveBest) {
+                if (!quiet)
+                    cout << "step " << (step + 1) << " (radius " << stepRadius << "): prune {"
+                         << describeEdgeCompact(pruneNode, pruneDad) << "}"
+                         << " -- every candidate rejected by parsimony prescreen; skipping." << endl;
+                continue;
             }
             bestNode = bestCandidate.node;
             bestDad = bestCandidate.dad;
@@ -1392,6 +1794,612 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps, double rad
          << " sec" << endl;
 
     delete aln;
+    return 2;
+}
+
+/**
+    an unconditional-acceptance SPR random walk. This exists purely to
+    gather data on how a candidate's parsimony difference relates to its
+    likelihood difference and its RF-distance-to-the-true-tree difference,
+    without the confound hill-climbing introduces: runHillClimb only ever
+    keeps a move that already improved the likelihood, so any candidate
+    ever recorded there (with or without usePrescreen) is a biased sample
+    for asking "does a candidate's parsimony difference predict its
+    likelihood/RF difference in general?" This command instead accepts
+    every chosen candidate unconditionally, every step, so every
+    parsimony/logL/RF difference recorded here is a plain random draw,
+    not one that already survived a real-likelihood filter.
+
+    Unlike runHillClimb, the starting tree is ALWAYS a random Yule-Harding
+    topology (never BioNJ) -- this isn't a search-quality test, so starting
+    from a "reasonable" tree isn't the point; a maximally uninformed start
+    keeps every subsequent step's candidate similarly uninformed, which is
+    what an unbiased sample needs. Candidates are picked exactly like
+    fast-mode hill-climbing (choosePrune()/chooseGraft(), same O(1)/
+    O(distance) engine) but are applied for keeps immediately via
+    applySPRTracked() -- there is no trial apply/rollback pair here, since
+    the move is going to be kept regardless of what it scores.
+
+    Per step: recompute parsimony (Fitch, computeParsimony()), likelihood
+    (computeLikelihood(), plain JC model, no branch-length/parameter
+    optimization), and RF distance to trueTreeArg (the AliSim ground-truth
+    tree), and record how each changed from the tree as it stood right
+    before this step. A step whose chosen prune edge has no legal graft
+    target is skipped (still consumes one of maxSteps), same as the same
+    situation in runHillClimb; the walk never stops early otherwise, and
+    never rolls a move back.
+
+    Writes every step's raw before/after values and diffs to
+    randomwalk_data.csv (repo root, overwritten each run) for offline
+    analysis; also prints a shorter step,parsimony_diff,logl_diff,rf_diff
+    line per step to stdout.
+
+    RESULTS (sim.treefile, ~100 taxa/3000bp, JC model, radius 10, 2000
+    steps, one run -- EXPERIMENTAL, single dataset/single seed):
+      - parsimony_diff vs logl_diff: Pearson r = -0.56 (moderate, correct-
+        sign correlation -- fewer extra substitutions genuinely tends to
+        mean better likelihood). Scanning parsimonyPrescreenTolerance()-
+        style thresholds T (reject if parsimony_diff > T) against "did
+        likelihood actually improve" gives a WIDE, fairly flat plateau of
+        ~69% classification accuracy for any T from about -15 to +2
+        (peak 69.4% at T=-14), versus a 53% majority-class baseline --
+        a real but moderate lift, not a sharp optimum. T=2 (the value
+        runHillClimb ships) sits inside that plateau (68.7%), not
+        meaningfully worse than the observed peak.
+      - parsimony_diff vs rf_diff: RF distance barely moved at all over
+        2000 steps (only 14/1869 recorded steps changed it, all by
+        exactly +/-2) -- the random start tree is already at RF=194,
+        which is 2*100-6, the theoretical MAXIMUM for 100 taxa, and a
+        single uninformed SPR move essentially never lands on or off a
+        bipartition shared with the true tree by chance. This makes
+        "which threshold best aligns with RF" a degenerate question here:
+        >99% of steps have rf_diff==0 regardless of parsimony_diff, so
+        no threshold does meaningfully better than the trivial "predict
+        no change" baseline. The rare 14 exceptions do show a clean
+        pattern for what little it's worth: every rf_diff==-2 (improving)
+        step had parsimony_diff < -170 and logl_diff > 0, and every
+        rf_diff==+2 (worsening) step had parsimony_diff > 420 and
+        logl_diff < 0 -- consistent with, but not adding evidence beyond,
+        the parsimony/likelihood correlation above, and far too few
+        events (n=14) to support picking a specific numeric threshold.
+      Bottom line: parsimony difference is a real, moderate proxy for
+      likelihood difference in general, with no sharp best cutoff in the
+      range tested; it says essentially nothing usable about RF change in
+      a random walk, because RF change is itself too rare an event here to
+      learn anything from. Retest with more steps/seeds before treating
+      the -15..+2 plateau as settled.
+
+    @return 0 on success, 1 if the tree/alignment couldn't be read
+ */
+int runRandomWalk(const string &trueTreeArg, int radius, int maxSteps) {
+    double wallClockStart = getRealTime();
+
+    // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
+    string alnFile = trueTreeArg;
+    const string suffix = ".treefile";
+    if (alnFile.size() > suffix.size()
+            && alnFile.compare(alnFile.size() - suffix.size(), suffix.size(), suffix) == 0)
+        alnFile = alnFile.substr(0, alnFile.size() - suffix.size()) + ".fa";
+    else
+        alnFile += ".fa";
+
+    ifstream alnCheck(alnFile.c_str());
+    if (!alnCheck.good()) {
+        cerr << "error: could not find alignment '" << alnFile << "'" << endl;
+        cerr << "  (derived from the tree argument by replacing '.treefile' with '.fa',"
+                " AliSim's own default output naming; generate a pair with e.g." << endl;
+        cerr << "   iqtree3 --alisim <prefix> -m \"GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}\""
+                " -t \"RANDOM{yh/100}\" --length 10000)" << endl;
+        return 2;
+    }
+    alnCheck.close();
+
+    // topology-only -- computeRFDist below never touches branch lengths,
+    // alignment, or model, so trueTree needs no further setup at all
+    PhyloTree trueTree;
+    readTreeArg(trueTree, trueTreeArg);
+
+    Params &params = Params::getInstance();
+    params.setDefault();
+
+    init_random((int) (time(nullptr) * 1000 + (long) (getRealTime() * 1000) % 1000));
+
+    // silence the library setup noise (Alignment/generateRandomTree/
+    // ModelFactory progress messages), same as runHillClimb
+    ostringstream suppressedSetupOutput;
+    streambuf *realCoutBuf = cout.rdbuf(suppressedSetupOutput.rdbuf());
+
+    InputType intype;
+    Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
+
+    PhyloTree tree(aln);
+    tree.setParams(&params);
+    // always a random start -- see this function's own comment for why
+    tree.generateRandomTree(YULE_HARDING);
+
+    // built once, O(n); kept in sync thereafter by applySPRTracked, since
+    // every move here is committed for real, never rolled back
+    EdgeRegistry edgeRegistry;
+    buildEdgeRegistry(tree, edgeRegistry);
+
+    tree.setNumThreads(1);
+    tree.setLikelihoodKernel(LK_SSE2);
+
+    string modelName = "JC";
+    ModelsBlock *modelsBlock = readModelsDefinition(params);
+    tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
+    delete modelsBlock;
+    tree.setModel(tree.getModelFactory()->model);
+    tree.setRate(tree.getModelFactory()->site_rate);
+    tree.initializeAllPartialLh();
+    // see the matching comment in runHillClimb: computeParsimony() silently
+    // scores every site as 0 substitutions until this is called once
+    if (aln->ordered_pattern.empty())
+        aln->orderPatternByNumChars(PAT_VARIANT);
+    tree.initializeAllPartialPars();
+
+    double curLogl = tree.computeLikelihood();
+    int curParsimony = tree.computeParsimony();
+
+    auto rfToTrueTree = [&](PhyloTree &t) -> int {
+        stringstream ss;
+        ss << newickOf(t);
+        ss.seekg(0, ios::beg);
+        vector<double> rfdist;
+        trueTree.computeRFDist(ss, rfdist);
+        return rfdist.empty() ? -1 : (int) rfdist[0];
+    };
+    int curRf = rfToTrueTree(tree);
+
+    cout.rdbuf(realCoutBuf);
+
+    cout << "random start tree: " << newickOf(tree) << endl;
+    cout << "  (logL = " << curLogl << ", parsimony = " << curParsimony << ", RF = " << curRf << ")" << endl;
+    cout << "radius           : " << radius << endl;
+    cout << "max steps        : " << maxSteps << endl;
+    cout << "every candidate is accepted unconditionally -- this is a random walk, not a search" << endl;
+    cout << endl;
+
+    ofstream csv("randomwalk_data.csv");
+    if (csv.good())
+        csv << "step,parsimony_before,parsimony_after,parsimony_diff,"
+               "logl_before,logl_after,logl_diff,rf_before,rf_after,rf_diff" << endl;
+    else
+        cerr << "warning: could not write to randomwalk_data.csv" << endl;
+
+    cout << "step,parsimony_diff,logl_diff,rf_diff" << endl;
+
+    int step = 0;
+    for (; step < maxSteps; step++) {
+        PhyloNode *pruneNode, *pruneDad;
+        if (!choosePrune(tree, edgeRegistry, pruneNode, pruneDad)) {
+            cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
+            step++;
+            break;
+        }
+
+        PhyloNode *graftNode, *graftDad;
+        int walkLength;
+        if (!chooseGraft(tree, pruneNode, pruneDad, radius, graftNode, graftDad, &walkLength)) {
+            cout << "step " << (step + 1) << ": prune {" << describeEdgeCompact(pruneNode, pruneDad)
+                 << "} -- no legal graft target; skipping." << endl;
+            continue;
+        }
+
+        SPRMove move;
+        move.prune_node = pruneNode;
+        move.prune_dad = pruneDad;
+        move.regraft_node = graftNode;
+        move.regraft_dad = graftDad;
+        move.radius = walkLength;
+        move.screening_score = 0.0;
+        move.exact_score = 0.0;
+        move.candidate_id = 0;
+        move.generation = step;
+
+        // committed immediately -- no trial apply/rollback pair, because
+        // this candidate is kept no matter what it scores
+        TrackedSPR tracked;
+        applySPRTracked(tree, edgeRegistry, move, tracked);
+
+        resetParsimonyBuffers(tree);
+        int newParsimony = tree.computeParsimony();
+        resetLikelihoodBuffers(tree);
+        double newLogl = tree.computeLikelihood();
+        int newRf = rfToTrueTree(tree);
+
+        int parsimonyDiff = newParsimony - curParsimony;
+        double loglDiff = newLogl - curLogl;
+        int rfDiff = newRf - curRf;
+
+        cout << (step + 1) << "," << parsimonyDiff << "," << loglDiff << "," << rfDiff << endl;
+        if (csv.good())
+            csv << (step + 1) << "," << curParsimony << "," << newParsimony << "," << parsimonyDiff << ","
+                << curLogl << "," << newLogl << "," << loglDiff << ","
+                << curRf << "," << newRf << "," << rfDiff << endl;
+
+        curParsimony = newParsimony;
+        curLogl = newLogl;
+        curRf = newRf;
+    }
+    if (csv.good())
+        csv.close();
+
+    cout << endl;
+    cout << "=== finished after " << step << " step(s) ===" << endl;
+    cout << "final tree (logL = " << curLogl << ", parsimony = " << curParsimony << "): " << newickOf(tree) << endl;
+    cout << "final RF distance to the original AliSim tree: " << curRf << endl;
+    cout << "per-step data written to randomwalk_data.csv" << endl;
+    cout << "time elapsed     : " << fixed << setprecision(2) << (getRealTime() - wallClockStart)
+         << " sec" << endl;
+
+    delete aln;
+    return 0;
+}
+
+/**
+    a second unconditional-acceptance SPR random walk (see runRandomWalk's
+    own comment for why "accept everything" is the right design for this
+    kind of measurement), testing a different cheap proxy: instead of
+    parsimony, this scores just the LOCAL subtree spanning the prune and
+    graft positions, evaluated as its own small standalone tree under the
+    same JC model, and compares how ITS likelihood changes to how the
+    WHOLE tree's likelihood changes for the same move.
+
+    Per step:
+      1. choosePrune()/chooseGraft() pick a candidate exactly like
+         runRandomWalk.
+      2. Before applying: find L = LCA(pruneDad, graftDad) in the CURRENT
+         topology (ancestry rooted at tree.root, rebuilt fresh every step
+         since the topology changes every step). Both attachment points
+         are pruneDad/graftDad's own descendants-or-self, so everything
+         the move can possibly change is confined to the clade hanging
+         off L, away from tree.root -- that clade is "the subtree".
+      3. Extract that clade's leaf names and build a standalone small
+         PhyloTree from a full-precision Newick fragment (see
+         writeFullPrecisionNewick) plus a projected sub-alignment
+         (Alignment::extractSubAlignment) covering just those leaves,
+         with its own fresh JC ModelFactory. computeLikelihood() on this
+         small tree gives "the subtree's own likelihood, evaluated as if
+         it were an independent tree" -- genuinely cheaper than the whole
+         tree's likelihood when the clade is small, since it never
+         touches partial likelihoods for anything outside it.
+      4. Apply the candidate for real via applySPRTracked (never rolled
+         back, exactly like runRandomWalk).
+      5. Re-locate the same clade in the NEW topology: since nothing
+         outside L's old clade was touched, the same leaf set is still a
+         valid clade after the move; its MRCA is refound via a fresh
+         ancestry rebuild and findLCA() on two reference leaves (the
+         first and last names collected in step 3), which by
+         collectLeafNames' traversal order sit on opposite sides of the
+         original split. The SAME sub-alignment is reused (same leaves,
+         same sequences); only a new small tree is built for the new
+         topology.
+      6. Recompute the small tree's likelihood (after) and the whole
+         tree's likelihood (after, via computeLikelihood() + resetLikelihoodBuffers
+         same as runRandomWalk), and record how much each changed from
+         the step's own "before" values.
+    Wall-clock time spent specifically inside the small-tree construction
+    + likelihood calls, and separately inside the whole-tree likelihood
+    calls, is accumulated across the whole run and reported at the end,
+    to compare the two approaches' actual cost head to head -- both are
+    computed every step here (needed to measure their correlation at
+    all), so neither number is what a real prescreen/replacement would
+    cost in production use, but their RATIO is exactly what answers
+    whether the subtree approach is worth using that way.
+
+    A step whose subtree ends up with fewer than 2 leaves (degenerate,
+    only possible right at a 3-taxon corner of the tree) skips the
+    subtree-specific measurement for that step but still applies the move
+    and updates the whole-tree running likelihood, same as any other
+    skip case in this file.
+
+    Writes step,subtree_size,subtree_logl_diff,whole_logl_diff to stdout
+    and a fuller version (before/after/diff for both, plus per-step
+    timings) to randomwalk_subtree_data.csv (repo root, overwritten each
+    run).
+
+    RESULTS (sim.treefile, ~100 taxa/3000bp, JC model, radius 10, 1000
+    steps/489 measured, one run -- EXPERIMENTAL, single dataset/seed):
+      - CORRELATION IS STRONG: Pearson r = 0.87 between subtree_logl_diff
+        and whole_logl_diff, with 82% sign agreement (both improve or
+        both worsen together) -- this local proxy tracks the whole
+        tree's likelihood change far better than the parsimony proxy did
+        in runRandomWalk (r=-0.56 there). Unsurprising in hindsight: the
+        subtree literally contains every node whose local topology
+        changed, so its own likelihood captures most of what moved,
+        unlike parsimony which is a different scoring function entirely.
+      - EFFICIENCY IS NOT: despite that strong correlation, this
+        implementation of "evaluate just the subtree" is SLOWER than
+        evaluating the whole tree, at every subtree size tested --
+        exactly backwards from what a useful prescreen/replacement needs:
+            subtree leaves   avg subtree ms   avg whole-tree ms   ratio
+                 0-10             14.9              11.1          1.3x
+                10-20             17.3              11.2          1.5x
+                20-35             21.2              10.8          2.0x
+                35-55             24.5               9.9          2.5x
+                55-80             29.8              10.8          2.8x
+                80-101            36.8               9.8          3.7x
+        The whole-tree number is roughly flat (~10-11ms) regardless of
+        subtree size, as expected (it's always the same ~100-taxon
+        computation via resetLikelihoodBuffers()+computeLikelihood()).
+        The subtree number, despite operating on far fewer leaves, is
+        NEVER cheaper -- because this function rebuilds a brand new
+        PhyloTree + projected sub-Alignment + fresh JC ModelFactory from
+        scratch every single time (twice per step: before and after), and
+        that construction overhead (Newick parsing, pattern
+        re-compression, buffer allocation) dominates over the actual
+        likelihood math it's supposedly saving on, even for a 5-leaf
+        subtree.
+      CONCLUSION: NOT worth using as either a prescreen or a full
+      replacement for the whole-tree likelihood check, as implemented --
+      it would strictly add cost (you'd still pay the ~10-11ms whole-tree
+      check on anything the prescreen didn't reject, on top of the
+      14-37ms subtree check). The correlation result suggests this idea
+      COULD pay off with a cheaper implementation -- e.g. computing just
+      the inner partial-likelihood vector at the LCA branch directly on
+      the EXISTING tree object (IQ-TREE's own computePartialLikelihood,
+      combined with the model's stationary frequencies as a stand-in for
+      "everything outside the clade"), instead of constructing independent
+      PhyloTree/Alignment/ModelFactory objects -- but that requires
+      correctly reimplementing low-level likelihood-summation logic this
+      tool currently gets for free from computeLikelihood(), which was
+      judged too risky to get right without extensive testing; this
+      version deliberately traded some possible efficiency for confidence
+      the numbers are actually correct.
+
+    @return 0 on success, 1 if the tree/alignment couldn't be read
+ */
+int runRandomWalkSubtree(const string &trueTreeArg, int radius, int maxSteps) {
+    double wallClockStart = getRealTime();
+
+    string alnFile = trueTreeArg;
+    const string suffix = ".treefile";
+    if (alnFile.size() > suffix.size()
+            && alnFile.compare(alnFile.size() - suffix.size(), suffix.size(), suffix) == 0)
+        alnFile = alnFile.substr(0, alnFile.size() - suffix.size()) + ".fa";
+    else
+        alnFile += ".fa";
+
+    ifstream alnCheck(alnFile.c_str());
+    if (!alnCheck.good()) {
+        cerr << "error: could not find alignment '" << alnFile << "'" << endl;
+        cerr << "  (derived from the tree argument by replacing '.treefile' with '.fa',"
+                " AliSim's own default output naming; generate a pair with e.g." << endl;
+        cerr << "   iqtree3 --alisim <prefix> -m \"GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}\""
+                " -t \"RANDOM{yh/100}\" --length 10000)" << endl;
+        return 2;
+    }
+    alnCheck.close();
+
+    Params &params = Params::getInstance();
+    params.setDefault();
+
+    init_random((int) (time(nullptr) * 1000 + (long) (getRealTime() * 1000) % 1000));
+
+    ostringstream suppressedSetupOutput;
+    streambuf *realCoutBuf = cout.rdbuf(suppressedSetupOutput.rdbuf());
+
+    InputType intype;
+    Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
+
+    PhyloTree tree(aln);
+    tree.setParams(&params);
+    tree.generateRandomTree(YULE_HARDING);
+
+    EdgeRegistry edgeRegistry;
+    buildEdgeRegistry(tree, edgeRegistry);
+
+    tree.setNumThreads(1);
+    tree.setLikelihoodKernel(LK_SSE2);
+
+    string modelName = "JC";
+    ModelsBlock *modelsBlock = readModelsDefinition(params);
+    tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
+    delete modelsBlock;
+    tree.setModel(tree.getModelFactory()->model);
+    tree.setRate(tree.getModelFactory()->site_rate);
+    tree.initializeAllPartialLh();
+
+    double curLogl = tree.computeLikelihood();
+
+    cout.rdbuf(realCoutBuf);
+
+    cout << "random start tree: " << newickOf(tree) << " (logL = " << curLogl << ")" << endl;
+    cout << "radius           : " << radius << endl;
+    cout << "max steps        : " << maxSteps << endl;
+    cout << "every candidate is accepted unconditionally -- this is a random walk, not a search" << endl;
+    cout << endl;
+
+    ofstream csv("randomwalk_subtree_data.csv");
+    if (csv.good())
+        csv << "step,subtree_leaves,subtree_logl_before,subtree_logl_after,subtree_logl_diff,"
+               "whole_logl_before,whole_logl_after,whole_logl_diff,subtree_eval_sec,whole_eval_sec" << endl;
+    else
+        cerr << "warning: could not write to randomwalk_subtree_data.csv" << endl;
+
+    cout << "step,subtree_leaves,subtree_logl_diff,whole_logl_diff" << endl;
+
+    double totalSubtreeEvalTime = 0.0, totalWholeTreeEvalTime = 0.0;
+    int subtreeStepsMeasured = 0;
+
+    int step = 0;
+    for (; step < maxSteps; step++) {
+        PhyloNode *pruneNode, *pruneDad;
+        if (!choosePrune(tree, edgeRegistry, pruneNode, pruneDad)) {
+            cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
+            step++;
+            break;
+        }
+
+        PhyloNode *graftNode, *graftDad;
+        int walkLength;
+        if (!chooseGraft(tree, pruneNode, pruneDad, radius, graftNode, graftDad, &walkLength)) {
+            cout << "step " << (step + 1) << ": prune {" << describeEdgeCompact(pruneNode, pruneDad)
+                 << "} -- no legal graft target; skipping." << endl;
+            continue;
+        }
+
+        // find the clade spanning both attachment points, in the CURRENT
+        // (pre-move) topology
+        ParentMap parentBefore;
+        DepthMap depthBefore;
+        buildAncestry((PhyloNode*) tree.root, nullptr, 0, parentBefore, depthBefore);
+        PhyloNode *lca = findLCA(pruneDad, graftDad, parentBefore, depthBefore);
+        PhyloNode *lcaDad = parentBefore.count(lca) ? parentBefore[lca] : nullptr;
+
+        vector<string> subtreeLeaves;
+        collectLeafNames(lca, lcaDad, subtreeLeaves);
+
+        bool measureSubtree = subtreeLeaves.size() >= 2;
+        Alignment *subAln = nullptr;
+        double subtreeLoglBefore = 0.0, subtreeLoglAfter = 0.0;
+        double stepSubtreeTime = 0.0;
+
+        if (measureSubtree) {
+            double t0 = getRealTime();
+            ostringstream suppressedStepOutput;
+            streambuf *realCoutBuf2 = cout.rdbuf(suppressedStepOutput.rdbuf());
+
+            IntVector seqIds;
+            for (size_t i = 0; i < subtreeLeaves.size(); i++)
+                seqIds.push_back(aln->getSeqID(subtreeLeaves[i]));
+            subAln = aln->extractSubAlignment(seqIds, 0);
+
+            ostringstream nwkBefore;
+            writeFullPrecisionNewick(nwkBefore, lca, lcaDad);
+            nwkBefore << ";";
+
+            PhyloTree smallTreeBefore;
+            smallTreeBefore.setParams(&params);
+            smallTreeBefore.read_TreeString(nwkBefore.str(), false);
+            smallTreeBefore.setAlignment(subAln);
+            smallTreeBefore.setNumThreads(1);
+            smallTreeBefore.setLikelihoodKernel(LK_SSE2);
+            ModelsBlock *smallModelsBlockB = readModelsDefinition(params);
+            smallTreeBefore.setModelFactory(new ModelFactory(params, modelName, &smallTreeBefore, smallModelsBlockB));
+            delete smallModelsBlockB;
+            smallTreeBefore.setModel(smallTreeBefore.getModelFactory()->model);
+            smallTreeBefore.setRate(smallTreeBefore.getModelFactory()->site_rate);
+            smallTreeBefore.initializeAllPartialLh();
+            subtreeLoglBefore = smallTreeBefore.computeLikelihood();
+
+            cout.rdbuf(realCoutBuf2);
+            stepSubtreeTime += getRealTime() - t0;
+        }
+
+        SPRMove move;
+        move.prune_node = pruneNode;
+        move.prune_dad = pruneDad;
+        move.regraft_node = graftNode;
+        move.regraft_dad = graftDad;
+        move.radius = walkLength;
+        move.screening_score = 0.0;
+        move.exact_score = 0.0;
+        move.candidate_id = 0;
+        move.generation = step;
+
+        TrackedSPR tracked;
+        applySPRTracked(tree, edgeRegistry, move, tracked);
+
+        bool subtreeMeasured = false;
+        if (measureSubtree) {
+            double t0 = getRealTime();
+            ostringstream suppressedStepOutput;
+            streambuf *realCoutBuf2 = cout.rdbuf(suppressedStepOutput.rdbuf());
+
+            // re-locate the same clade in the new topology. In the common
+            // case, nothing outside the original clade was touched, so its
+            // MRCA is found fresh via two reference leaves from opposite
+            // sides of the original split -- but this is NOT guaranteed in
+            // every case (e.g. if the pruned branch was itself one whole
+            // side of the LCA split, the LCA node itself can get bypassed
+            // by the same "degree drops to 2" mechanic that removes
+            // pruneDad), so the resulting leaf set is explicitly checked
+            // against the original before trusting it, rather than assumed
+            ParentMap parentAfter;
+            DepthMap depthAfter;
+            buildAncestry((PhyloNode*) tree.root, nullptr, 0, parentAfter, depthAfter);
+            PhyloNode *leafX = (PhyloNode*) tree.findLeafName(subtreeLeaves.front());
+            PhyloNode *leafY = (PhyloNode*) tree.findLeafName(subtreeLeaves.back());
+            PhyloNode *lcaAfter = findLCA(leafX, leafY, parentAfter, depthAfter);
+            PhyloNode *lcaAfterDad = parentAfter.count(lcaAfter) ? parentAfter[lcaAfter] : nullptr;
+
+            vector<string> afterLeaves;
+            collectLeafNames(lcaAfter, lcaAfterDad, afterLeaves);
+            vector<string> beforeSorted = subtreeLeaves, afterSorted = afterLeaves;
+            sort(beforeSorted.begin(), beforeSorted.end());
+            sort(afterSorted.begin(), afterSorted.end());
+
+            if (afterSorted == beforeSorted) {
+                ostringstream nwkAfter;
+                writeFullPrecisionNewick(nwkAfter, lcaAfter, lcaAfterDad);
+                nwkAfter << ";";
+
+                PhyloTree smallTreeAfter;
+                smallTreeAfter.setParams(&params);
+                smallTreeAfter.read_TreeString(nwkAfter.str(), false);
+                smallTreeAfter.setAlignment(subAln);
+                smallTreeAfter.setNumThreads(1);
+                smallTreeAfter.setLikelihoodKernel(LK_SSE2);
+                ModelsBlock *smallModelsBlockA = readModelsDefinition(params);
+                smallTreeAfter.setModelFactory(new ModelFactory(params, modelName, &smallTreeAfter, smallModelsBlockA));
+                delete smallModelsBlockA;
+                smallTreeAfter.setModel(smallTreeAfter.getModelFactory()->model);
+                smallTreeAfter.setRate(smallTreeAfter.getModelFactory()->site_rate);
+                smallTreeAfter.initializeAllPartialLh();
+                subtreeLoglAfter = smallTreeAfter.computeLikelihood();
+                subtreeMeasured = true;
+            }
+
+            cout.rdbuf(realCoutBuf2);
+            stepSubtreeTime += getRealTime() - t0;
+
+            delete subAln;
+            if (subtreeMeasured) {
+                totalSubtreeEvalTime += stepSubtreeTime;
+                subtreeStepsMeasured++;
+            }
+        }
+
+        double t1 = getRealTime();
+        resetLikelihoodBuffers(tree);
+        double newLogl = tree.computeLikelihood();
+        double stepWholeTime = getRealTime() - t1;
+        totalWholeTreeEvalTime += stepWholeTime;
+
+        double wholeDiff = newLogl - curLogl;
+
+        if (subtreeMeasured) {
+            double subtreeDiff = subtreeLoglAfter - subtreeLoglBefore;
+            cout << (step + 1) << "," << subtreeLeaves.size() << "," << subtreeDiff << "," << wholeDiff << endl;
+            if (csv.good())
+                csv << (step + 1) << "," << subtreeLeaves.size() << "," << subtreeLoglBefore << ","
+                    << subtreeLoglAfter << "," << subtreeDiff << ","
+                    << curLogl << "," << newLogl << "," << wholeDiff << ","
+                    << stepSubtreeTime << "," << stepWholeTime << endl;
+        }
+
+        curLogl = newLogl;
+    }
+    if (csv.good())
+        csv.close();
+
+    cout << endl;
+    cout << "=== finished after " << step << " step(s) ===" << endl;
+    cout << "final tree (logL = " << curLogl << "): " << newickOf(tree) << endl;
+    cout << "per-step data written to randomwalk_subtree_data.csv" << endl;
+    cout << "subtree steps measured : " << subtreeStepsMeasured << " / " << step << endl;
+    if (subtreeStepsMeasured > 0) {
+        cout << "total time in subtree eval  : " << fixed << setprecision(4) << totalSubtreeEvalTime
+             << " sec (avg " << (totalSubtreeEvalTime / subtreeStepsMeasured * 1000.0) << " ms/step)" << endl;
+        cout << "total time in whole-tree eval: " << fixed << setprecision(4) << totalWholeTreeEvalTime
+             << " sec (avg " << (totalWholeTreeEvalTime / subtreeStepsMeasured * 1000.0) << " ms/step)" << endl;
+    }
+    cout << "time elapsed     : " << fixed << setprecision(2) << (getRealTime() - wallClockStart)
+         << " sec" << endl;
+
+    delete aln;
     return 0;
 }
 
@@ -1412,7 +2420,7 @@ int runSelfTest() {
     PhyloNode *D = requireLeaf(tree, "D");
     PhyloNode *A = requireLeaf(tree, "A");
     if (!C || !D || !A)
-        return 1;
+        return 2;
 
     // C's only neighbor is its dad (the (A,C) cherry node); D's only
     // neighbor is its dad (the (B,D) cherry node)
@@ -1520,7 +2528,7 @@ void printUsage(const char *prog) {
     cerr << "      plain JC model. Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast] [quiet]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast [N]] [quiet] [prescreen]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -1528,23 +2536,73 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt. Three optional trailing flags, in any order:" << endl;
-    cerr << "        random  start from a random Yule-Harding topology instead of the" << endl;
-    cerr << "                default BioNJ estimate tree" << endl;
-    cerr << "        fast    pick each step's prune edge via choosePrune() and its regraft" << endl;
-    cerr << "                target via chooseGraft() -- an O(1)/O(distance) random proposal" << endl;
-    cerr << "                that's applied and kept-or-reverted directly, instead of" << endl;
-    cerr << "                enumerating and scoring every candidate in the radius" << endl;
-    cerr << "        quiet   suppress the one printed line per step; only the setup header" << endl;
-    cerr << "                and final summary (final tree, RF distance, time elapsed) are" << endl;
-    cerr << "                printed. With max-steps in the thousands, this also avoids the" << endl;
-    cerr << "                per-line flush stalling on a slow interactive console" << endl;
+    cerr << "      output.txt. Five optional trailing flags, in any order:" << endl;
+    cerr << "        random     start from a random Yule-Harding topology instead of the" << endl;
+    cerr << "                   default BioNJ estimate tree" << endl;
+    cerr << "        fast [N]   pick each step's prune edge via choosePrune() and draw N (default" << endl;
+    cerr << "                   1) independent regraft targets via chooseGraft() -- an" << endl;
+    cerr << "                   O(1)/O(distance) random proposal -- from that same prune position," << endl;
+    cerr << "                   score each by real likelihood, and keep the best of the group," << endl;
+    cerr << "                   applied and kept-or-reverted directly, instead of enumerating and" << endl;
+    cerr << "                   scoring every candidate in the radius. 'fast' alone (N omitted) is" << endl;
+    cerr << "                   the original single-candidate behavior; the N after 'fast' is only" << endl;
+    cerr << "                   consumed if it actually parses as a positive integer, so 'fast" << endl;
+    cerr << "                   quiet' still works (quiet is not mistaken for a candidate count)" << endl;
+    cerr << "        quiet      suppress the one printed line per step; only the setup header" << endl;
+    cerr << "                   and final summary (final tree, RF distance, time elapsed) are" << endl;
+    cerr << "                   printed. With max-steps in the thousands, this also avoids the" << endl;
+    cerr << "                   per-line flush stalling on a slow interactive console" << endl;
+    cerr << "        prescreen  before each candidate's real likelihood check, auto-reject it" << endl;
+    cerr << "                   on a cheap parsimony score alone if that's clearly worse than" << endl;
+    cerr << "                   the current tree already is -- see parsimonyPrescreenTolerance()" << endl;
+    cerr << "                   in the source. EXPERIMENTAL: tuned informally against one" << endl;
+    cerr << "                   dataset, and on that dataset did not show a net speed benefit" << endl;
+    cerr << "                   under a plain JC model (see its comment for the actual numbers)" << endl;
+    cerr << "                   -- likelier to help with a heavier substitution model" << endl;
+    cerr << "        reopt      re-optimize (Newton-Raphson) the 3 edges an SPR move actually" << endl;
+    cerr << "                   changes before scoring a candidate, the same way IQ-TREE's own" << endl;
+    cerr << "                   NNI search re-optimizes the branches it touches -- instead of" << endl;
+    cerr << "                   trusting applySPR's naive placeholder lengths (half the target" << endl;
+    cerr << "                   edge split evenly, the two vacated edges summed). Can only ever" << endl;
+    cerr << "                   improve or leave unchanged a candidate's reported likelihood for" << endl;
+    cerr << "                   its topology. EXPERIMENTAL and noticeably slower per candidate" << endl;
+    cerr << "                   (real branch-length search plus the safe/scaled likelihood" << endl;
+    cerr << "                   kernel this needs -- see scoreTrialSPRMove's comment in the" << endl;
+    cerr << "                   source for why); ~1.3x slower in one informal comparison, for a" << endl;
+    cerr << "                   modest logL improvement (-7.60e+05 -> -7.59e+05 at radius 10," << endl;
+    cerr << "                   15 steps on sim.treefile)" << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast] [quiet]" << endl;
+    cerr << "  " << prog << " --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast [N]] [quiet] [prescreen] [reopt]" << endl;
     cerr << "      same search as --hillclimb, but the radius shrinks by <decay> each step" << endl;
     cerr << "      (step i uses radius = max(1, ceil(<radius> - <decay> * i)) instead of a" << endl;
-    cerr << "      fixed <radius> for every step). Accepts the same trailing 'random', 'fast'," << endl;
-    cerr << "      and 'quiet' flags as --hillclimb, in any order." << endl;
+    cerr << "      fixed <radius> for every step). Accepts the same trailing 'random', 'fast [N]'," << endl;
+    cerr << "      'quiet', 'prescreen', and 'reopt' flags as --hillclimb, in any order." << endl;
+    cerr << endl;
+    cerr << "  " << prog << " --randomwalk <alisim-tree.treefile> <radius> <max-steps>" << endl;
+    cerr << "      NOT a search: an unconditional-acceptance SPR random walk, always" << endl;
+    cerr << "      starting from a random Yule-Harding tree, that accepts every" << endl;
+    cerr << "      choosePrune()/chooseGraft()-picked candidate regardless of whether it" << endl;
+    cerr << "      improves. Exists to gather an unbiased sample of how a candidate's" << endl;
+    cerr << "      parsimony difference relates to its likelihood difference and its RF-" << endl;
+    cerr << "      distance-to-<alisim-tree.treefile> difference (hill-climbing only ever" << endl;
+    cerr << "      keeps improving moves, which biases that question). Prints and writes" << endl;
+    cerr << "      to randomwalk_data.csv one row per step: parsimony/logL/RF before, after," << endl;
+    cerr << "      and their difference." << endl;
+    cerr << endl;
+    cerr << "  " << prog << " --randomwalk-subtree <alisim-tree.treefile> <radius> <max-steps>" << endl;
+    cerr << "      Same idea as --randomwalk, but tests a different cheap proxy: finds the" << endl;
+    cerr << "      LCA of the prune and graft positions, evaluates JUST that clade as its" << endl;
+    cerr << "      own small standalone tree (own Newick + projected sub-alignment, same" << endl;
+    cerr << "      JC model) before and after the move, and compares its likelihood change" << endl;
+    cerr << "      to the whole tree's likelihood change. Prints/writes" << endl;
+    cerr << "      randomwalk_subtree_data.csv with both series plus per-step timings for" << endl;
+    cerr << "      each. EXPERIMENTAL result on one dataset (see runRandomWalkSubtree's" << endl;
+    cerr << "      comment for the numbers): the subtree score correlates STRONGLY with the" << endl;
+    cerr << "      whole tree's likelihood change (r=0.87, much stronger than the parsimony" << endl;
+    cerr << "      proxy's r=-0.56), but this implementation is SLOWER than just checking the" << endl;
+    cerr << "      whole tree at every subtree size tested, because rebuilding a standalone" << endl;
+    cerr << "      PhyloTree/Alignment/ModelFactory every step costs more than the likelihood" << endl;
+    cerr << "      math it saves -- not worth using as a prescreen or replacement as built." << endl;
     cerr << endl;
     cerr << "  In the move/list-grafts forms, an edge is a comma-separated leaf name list:" << endl;
     cerr << "    a single leaf, e.g. C         -> that leaf's own pendant edge" << endl;
@@ -1559,37 +2617,75 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20      (hill-climb search)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random   (random Yule-Harding start tree)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 fast     (O(1)/O(distance) proposal search)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 3 20 fast 5   (5 proposals/step, keep the best)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 3 20 random fast   (both, in either order)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 6 18000 fast quiet (many steps, no per-step spam)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 15 20 prescreen    (parsimony auto-reject, experimental)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 10 20 reopt        (re-optimize branch lengths, experimental)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5  (hill-climb, shrinking radius)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 random  (same, random start tree)" << endl;
     cerr << "    " << prog << " --hillclimb-decay sim.treefile 6 20 0.5 fast    (same, proposal search)" << endl;
+    cerr << "    " << prog << " --randomwalk sim.treefile 10 300   (unbiased parsimony/logL/RF data)" << endl;
+    cerr << "    " << prog << " --randomwalk-subtree sim.treefile 10 300  (LCA-subtree vs whole-tree logL)" << endl;
     cerr << endl;
     cerr << "  Full reference: tree/spr_topology_test_usage.txt" << endl;
 }
 
 /**
     parse the trailing optional flags shared by --hillclimb and
-    --hillclimb-decay: the literal words "random", "fast", and "quiet", in
-    any order, each at most once. argv[fromIndex..argc-1] must consist of
-    exactly these (in any combination); anything else (typos, duplicates,
-    unrelated tokens) is treated as a parse failure so main() falls through
-    to printUsage() rather than silently ignoring a misspelled flag.
+    --hillclimb-decay: the literal words "random", "fast", "quiet", and
+    "prescreen", in any order, each at most once. argv[fromIndex..argc-1]
+    must consist of exactly these (in any combination); anything else
+    (typos, duplicates, unrelated tokens) is treated as a parse failure so
+    main() falls through to printUsage() rather than silently ignoring a
+    misspelled flag. "prescreen" combines with "fast" too -- in that case
+    the auto-reject check applies to each of fast mode's candidates
+    individually, exactly as it does for each candidate in the exhaustive
+    (non-fast) branch; see usePrescreen's comment on runHillClimb.
+
+    "fast" may optionally be immediately followed by a positive integer,
+    e.g. "fast 5" -- how many independent chooseGraft() candidates to draw
+    per step instead of the default 1 (plain "fast", unchanged from
+    before). This is a parsing special case, not a separate flag: the
+    token right after "fast" is only consumed as its candidate count if it
+    actually parses as a positive integer, so "fast quiet" still parses
+    "quiet" as its own flag rather than erroring. See numCandidates'
+    comment on runHillClimb.
+
+    "reopt" re-optimizes (Newton-Raphson) each candidate's 3 changed edges
+    before it's scored, the same way IQ-TREE's own NNI search does for the
+    branches it touches, instead of trusting applySPR's naive placeholder
+    lengths. See scoreTrialSPRMove's comment on runHillClimb.
     @return false if any trailing argument isn't recognized
  */
 bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
-        bool &quiet) {
+        bool &quiet, bool &usePrescreen, int &numCandidates, bool &reoptimizeBranchLengths) {
     randomStart = false;
     useFastSelection = false;
     quiet = false;
+    usePrescreen = false;
+    numCandidates = 1;
+    reoptimizeBranchLengths = false;
     for (int i = fromIndex; i < argc; i++) {
         string arg = argv[i];
         if (arg == "random" && !randomStart)
             randomStart = true;
-        else if (arg == "fast" && !useFastSelection)
+        else if (arg == "fast" && !useFastSelection) {
             useFastSelection = true;
-        else if (arg == "quiet" && !quiet)
+            if (i + 1 < argc) {
+                char *end = nullptr;
+                long n = strtol(argv[i + 1], &end, 10);
+                if (end != argv[i + 1] && *end == '\0' && n >= 1) {
+                    numCandidates = (int) n;
+                    i++; // consume the numeric argument too
+                }
+            }
+        } else if (arg == "quiet" && !quiet)
             quiet = true;
+        else if (arg == "prescreen" && !usePrescreen)
+            usePrescreen = true;
+        else if (arg == "reopt" && !reoptimizeBranchLengths)
+            reoptimizeBranchLengths = true;
         else
             return false;
     }
@@ -1604,21 +2700,30 @@ int main(int argc, char **argv) {
     // exactly 4 arguments and would otherwise be misread as a move command
     if (argc == 5 && string(argv[1]) == "--list-grafts")
         return runListGrafts(argv[2], argv[3], atoi(argv[4]));
+    if (argc == 5 && string(argv[1]) == "--randomwalk")
+        return runRandomWalk(argv[2], atoi(argv[3]), atoi(argv[4]));
+    if (argc == 5 && string(argv[1]) == "--randomwalk-subtree")
+        return runRandomWalkSubtree(argv[2], atoi(argv[3]), atoi(argv[4]));
     if (argc >= 5 && string(argv[1]) == "--hillclimb") {
-        bool randomStart, useFastSelection, quiet;
-        if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet))
-            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, randomStart, useFastSelection, quiet);
+        bool randomStart, useFastSelection, quiet, usePrescreen, reoptimizeBranchLengths;
+        int numCandidates;
+        if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet, usePrescreen, numCandidates,
+                reoptimizeBranchLengths))
+            return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), 0.0, randomStart, useFastSelection, quiet,
+                    usePrescreen, numCandidates, reoptimizeBranchLengths);
     }
     if (argc >= 6 && string(argv[1]) == "--hillclimb-decay") {
-        bool randomStart, useFastSelection, quiet;
-        if (parseHillClimbFlags(argc, argv, 6, randomStart, useFastSelection, quiet))
+        bool randomStart, useFastSelection, quiet, usePrescreen, reoptimizeBranchLengths;
+        int numCandidates;
+        if (parseHillClimbFlags(argc, argv, 6, randomStart, useFastSelection, quiet, usePrescreen, numCandidates,
+                reoptimizeBranchLengths))
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), atof(argv[5]), randomStart, useFastSelection,
-                    quiet);
+                    quiet, usePrescreen, numCandidates, reoptimizeBranchLengths);
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")
         return runLikelihood(argv[2], argv[3]);
     if (argc == 4)
         return runManualSPR(argv[1], argv[2], argv[3]);
     printUsage(argv[0]);
-    return 1;
+    return 2;
 }

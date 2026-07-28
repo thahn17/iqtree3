@@ -34,7 +34,7 @@ A few other things that trip people up:
 - cd to the repo root first (or adjust the paths below to match wherever
   you actually are): cd c:/Users/tinst/Desktop/iqtree3
 - Quoting differs by shell. The examples below (multi-leaf specs like
-  "B,D", and AliSim's -t "RANDOM{yh/15}") use plain double quotes, which
+  "B,D", and AliSim's -t "RANDOM{yh/100}") use plain double quotes, which
   work as-is in PowerShell, cmd.exe, and Git Bash for these examples.
 - To check whether the last command succeeded: PowerShell uses
   $LASTEXITCODE, cmd.exe uses %ERRORLEVEL%, bash uses $? -- useful since
@@ -146,16 +146,26 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast]
+    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast [N]] [quiet] [prescreen] [reopt]
 
     First, generate a ground-truth tree and a DNA alignment simulated along
     it with the real iqtree3 binary's built-in AliSim feature (this needs
     the full `iqtree3` executable, a separate build target from
     `spr_topology_test` -- see "Generating input data" below):
-        iqtree3 --alisim sim -m GTR -t "RANDOM{yh/15}" --length 500 --seed 42 -af fasta
+        iqtree3 --alisim sim -m "GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}" -t "RANDOM{yh/100}" --length 10000 --seed 42 -af fasta
 
     (--seed is required -- AliSim refuses to run without one, to keep runs
-    reproducible; any integer works, it just has to be present.)
+    reproducible; any integer works, it just has to be present. The rate
+    and frequency parameters after GTR are also required for an accurate
+    simulation, not just cosmetic: without them, AliSim silently defaults
+    to all-equal exchangeability rates -- effectively no more complex than
+    JC despite the "GTR" label -- and warns loudly about it at runtime
+    ("GTR must have unequal base frequencies... could be randomly
+    generated if users do not provide them"). The values above are
+    arbitrary, not fit to any real data, but they are EXPLICIT, which is
+    what actually matters here -- pick whatever rate/frequency skew suits
+    whatever you're testing. sim.treefile/sim.fa in the repo root were
+    generated with this exact command.)
 
     This produces sim.treefile (the true tree) and sim.fa (the simulated
     alignment). Feed the .treefile to --hillclimb; the alignment path is
@@ -186,19 +196,109 @@ Tree argument convention (used by every command that takes a tree):
                 applySPR -> computeLikelihood -> rollbackSPR (no candidate
                 ever gets its own copy of the tree), and keep whichever
                 scored best
-                "fast": pick a single candidate via chooseGraft() -- a
+                "fast" (optionally followed by an integer N): draw N
+                (default 1) independent candidates via chooseGraft() -- a
                 weighted-random-distance walk outward from the prune point,
-                O(distance walked) rather than O(candidates within radius),
-                and use it directly (no scoring against alternatives, since
-                there's only the one)
+                O(distance walked) rather than O(candidates within radius)
+                -- all from this SAME step's prune point, score each one
+                the same apply -> computeLikelihood -> rollback way as the
+                default mode does for its exhaustive candidate list, and
+                keep whichever of the N scored best. "fast" alone (N
+                omitted) is the original single-candidate behavior; "fast
+                5" trades away some of that cheapness for a chance at a
+                better move each step, without paying to score every
+                candidate within the radius the way the default
+                (exhaustive) mode does. The N is only consumed as a
+                candidate count if it actually parses as a positive
+                integer, so "fast quiet" still parses "quiet" as its own
+                flag rather than misreading it as fast's count
            c. apply that candidate for real (still via applySPR, on the
-              same tree object) and print the resulting tree
+              same tree object) and print the resulting tree (suppressed
+              per-step if "quiet" was given -- see below)
            d. if its likelihood beats the current tree, keep the move;
               otherwise roll it back
          Either way, move on to the next step with whatever tree is
          current (the improved one if the move was kept, the original one
          if it was rolled back) -- a step with no improvement does not end
          the search, it just tries a new random prune point next.
+
+    "quiet": suppresses the per-step tree/likelihood print (step 2c above)
+    entirely -- only the header and the final summary (final tree, RF
+    distance, elapsed time) are printed. Purely a display option; the
+    search itself is unaffected. Intended for long runs, where printing a
+    full tree to the terminal every single step turned out to add real
+    wall-clock overhead of its own (terminal rendering, not computation) --
+    the same search can take substantially longer in an interactive
+    terminal than piped to a file or run with "quiet", even though the CPU
+    work is identical either way.
+
+    "prescreen": adds a cheap parsimony-based auto-reject check before each
+    candidate's real likelihood is ever computed. For each candidate (each
+    of the N drawn under "fast", or each one individually in the default
+    exhaustive mode), the tool applies the candidate move, computes its
+    Fitch parsimony score (PhyloTree::computeParsimony(), pure bitwise set
+    operations over site patterns -- no substitution-model math, far
+    cheaper than a real likelihood evaluation), and compares it against the
+    CURRENT tree's parsimony score (computed once per step, before trying
+    any candidate). If the candidate's parsimony is worse than the current
+    tree's by more than a fixed tolerance, it is rejected immediately (the
+    move is rolled back and the expensive computeLikelihood() call for
+    that candidate is skipped entirely) rather than treated as a normal
+    scoring candidate. In exhaustive mode, rejected candidates are simply
+    excluded from the "find the best candidate" comparison; if every
+    candidate in a step is rejected this way, that step is skipped exactly
+    like a step with zero legal candidates.
+
+    The tolerance value is hardcoded (parsimonyPrescreenTolerance() in
+    tree/spr_topology_test.cpp) and EXPERIMENTAL, across two rounds of
+    testing against sim.treefile that don't fully agree. The first round
+    (several values from 0 to 20 at various radii) found no consistent
+    speedup or RF benefit from prescreening at all, under a plain JC
+    model. A second round (radius 10, 30 steps, 3 repeats per value,
+    averaged) found tolerance 2 consistently ~25% faster than no
+    prescreen across all 3 repeats, for a small RF cost comfortably
+    inside this search's own run-to-run noise -- no other tolerance
+    tested (including 0) showed a similar advantage. 2 is kept as the
+    shipped default since it's the only value with any empirical support,
+    but 3 repeats with no fixed RNG seed is thin evidence -- see
+    parsimonyPrescreenTolerance()'s own comment for the full numbers, and
+    treat this as a starting point for further experimentation, not a
+    settled result.
+
+    "reopt": before a candidate is scored, re-optimizes (Newton-Raphson,
+    via PhyloTree::optimizeOneBranch(), maxNRStep=10 -- matching
+    NNI_MAX_NR_STEP's own default, utils/pllnni.cpp) the 3 edges an SPR
+    move actually changes: the two split halves of the target edge at the
+    new attachment point, and the merged edge left behind at the vacated
+    one. This is exactly what IQ-TREE's own NNI search does for the
+    branch(es) it touches (see PhyloTree::getBestNNIForBran) -- instead of
+    trusting applySPR's own naive placeholder lengths (an even half-split
+    of the target edge, and a plain sum for the merged edge; see
+    applySPR's comment in phylotree.cpp). Re-optimizing can only ever
+    improve or leave unchanged a candidate's reported likelihood for its
+    topology, since it's searching the same space optimizeOneBranch always
+    searches -- it turns "whatever the naive placeholder lengths happen to
+    give" into an actual (locally) likelihood-optimal set of lengths for
+    those three edges, closer to what a real ML search would report for
+    the same topology.
+
+    EXPERIMENTAL, and comes with two real costs: (1) it needs the
+    "safe"/scaled likelihood kernel (this tool sets
+    Params::lk_safe_scaling automatically whenever "reopt" is given) --
+    real branch-length search can legitimately push a length toward an
+    extreme value while searching, which the plain (unscaled) SSE kernel
+    isn't built to handle without numerical underflow in the likelihood
+    derivative; the naive fixed-length scoring path never searches branch
+    lengths at all, so it doesn't need this. (2) it is noticeably slower
+    per candidate regardless -- in one informal comparison (radius 10, 15
+    steps, sim.treefile), plain --hillclimb took ~64s for a final logL of
+    -7.60e+05, while the same run with "reopt" took ~84s (~1.3x) for a
+    final logL of -7.59e+05. A BioNJ estimate tree can also have a zero or
+    slightly negative branch length on some edge (a known artifact of
+    distance-based methods on noisy distance matrices); this tool clamps
+    any such length up to the model's own minimum branch length before
+    optimizing that edge, since optimizeOneBranch itself asserts its
+    starting length is non-negative.
       3. Stop early (before <max-steps>) only if a chosen prune edge has no
          degree-3 node left to prune from at all (topology exhausted). A
          step with zero legal candidates (default) or no legal graft target
@@ -210,10 +310,14 @@ Tree argument convention (used by every command that takes a tree):
     search: it always finds the single best move available within
     <radius>, at the cost of scoring every candidate in that neighborhood
     every step. Appending "fast" switches to a proposal-based random walk
-    instead: one candidate per step, accepted if it improves and reverted
-    otherwise, at O(1)/O(distance) cost per step rather than O(radius) --
-    trading the guarantee of finding the best move in the radius for much
-    cheaper steps, closer to a stochastic hill-climb than steepest descent.
+    instead: N candidates per step (default 1), the best of them accepted
+    if it improves and reverted otherwise, at O(N)/O(N*distance) cost per
+    step rather than O(candidates within radius) -- trading the guarantee
+    of finding the best move in the radius for much cheaper steps, closer
+    to a stochastic hill-climb than steepest descent. Raising N (via "fast
+    N") narrows that gap a little at a time: still far cheaper than the
+    exhaustive mode when the radius has many candidates, but with a better
+    chance of finding an improving move than a single draw.
 
     On completion, prints the Robinson-Foulds (RF) distance between the
     original AliSim tree and the final searched tree to the terminal, and
@@ -234,12 +338,18 @@ Tree argument convention (used by every command that takes a tree):
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast 5   (5 candidates/step, keep the best)
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random fast
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 quiet
+        build/spr_topology_test.exe --hillclimb sim.treefile 15 20 prescreen (parsimony auto-reject, experimental)
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast prescreen quiet
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast 5 prescreen quiet
+        build/spr_topology_test.exe --hillclimb sim.treefile 10 20 reopt   (re-optimize branch lengths, experimental)
 
 
 6) Greedy randomized SPR hill-climbing search with a decaying radius
 ------------------------------------------------------------------------
-    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast]
+    build/spr_topology_test.exe --hillclimb-decay <alisim-tree.treefile> <radius> <max-steps> <decay> [random] [fast [N]] [quiet] [prescreen] [reopt]
 
     Identical to --hillclimb (command 5 above; same input files, same
     algorithm, same output, same exit codes) except the regraft search
@@ -260,24 +370,183 @@ Tree argument convention (used by every command that takes a tree):
     not a separate search).
 
     When a step's shrunken radius yields zero legal graft candidates (or,
-    under "fast", no legal graft target at all), that step is skipped
-    exactly like the same situation in plain --hillclimb (see command 5,
-    algorithm step 2 and its "stop early" paragraph) -- it does not end the
-    search early by itself. Under "fast", the shrinking radius instead
-    caps chooseGraft's own maximum walk distance each step.
+    under "fast", none of its N draws finding a legal graft target at
+    all), that step is skipped exactly like the same situation in plain
+    --hillclimb (see command 5, algorithm step 2 and its "stop early"
+    paragraph) -- it does not end the search early by itself. Under
+    "fast", the shrinking radius instead caps each of chooseGraft's N
+    draws' own maximum walk distance each step.
 
-    Also accepts the same trailing "random" and "fast" arguments as
-    --hillclimb, in either order (see command 5, algorithm steps 1-2):
-    "random" starts from a random Yule-Harding topology instead of the
-    BioNJ estimate tree; "fast" picks each step's regraft target via
-    chooseGraft()'s O(distance) random walk instead of exhaustively scoring
-    every candidate in the radius.
+    Also accepts the same trailing "random", "fast [N]", "quiet",
+    "prescreen", and "reopt" arguments as --hillclimb, in any order (see
+    command 5, algorithm steps 1-2 and the "quiet"/"prescreen"/"reopt"
+    paragraphs above): "random" starts from a random Yule-Harding topology
+    instead of the BioNJ estimate tree; "fast" (optionally followed by an
+    integer N) draws N (default 1) regraft targets per step via
+    chooseGraft()'s O(distance) random walk and keeps the best-scoring of
+    them, instead of exhaustively scoring every candidate in the radius;
+    "quiet" suppresses the per-step print; "prescreen" adds the
+    experimental parsimony auto-reject check (applied per-step against
+    that step's own shrunken radius, same as everything else about
+    --hillclimb-decay); "reopt" re-optimizes each candidate's 3 changed
+    edges before scoring, same as in --hillclimb.
 
     Examples:
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 random
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 fast
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 fast 5
         build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 random fast
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 fast prescreen quiet
+        build/spr_topology_test.exe --hillclimb-decay sim.treefile 11 50 0.2 reopt quiet
+
+
+7) Unconditional-acceptance SPR random walk (NOT a search)
+---------------------------------------------------------------
+    build/spr_topology_test.exe --randomwalk <alisim-tree.treefile> <radius> <max-steps>
+
+    Same input files/conventions as --hillclimb (command 5): needs a
+    <prefix>.treefile + <prefix>.fa pair from AliSim (see "Generating
+    input data" below).
+
+    This is deliberately NOT a hill-climb: it exists only to gather an
+    unbiased sample of how a candidate's parsimony difference relates to
+    its likelihood difference and its RF-distance-to-<alisim-tree.treefile>
+    difference. --hillclimb only ever keeps a move that already improved
+    the likelihood (whether or not "prescreen" is also on), so every
+    candidate it ever records is a biased sample for asking "does
+    parsimony difference predict likelihood/RF difference in general?".
+    --randomwalk instead:
+      1. Always starts from a random Yule-Harding tree (never BioNJ --
+         see this command's own rationale in runRandomWalk's comment).
+      2. Each step, picks a candidate via choosePrune()/chooseGraft()
+         (the same O(1)/O(distance) engine as --hillclimb's "fast" mode)
+         and applies it for real immediately, via applySPRTracked() --
+         there is no trial apply/rollback pair, no likelihood comparison,
+         and no reverting: every chosen candidate is kept, every step,
+         for <max-steps> steps, regardless of whether it improves
+         anything.
+      3. Recomputes parsimony (Fitch), likelihood (plain JC), and RF
+         distance to the AliSim tree after every step, and records how
+         each changed from the tree as it stood right before that step.
+
+    Prints one "step,parsimony_diff,logl_diff,rf_diff" line per step to
+    stdout, and writes a fuller version (before/after/diff for all three
+    metrics) to randomwalk_data.csv (repo root, overwritten each run) for
+    offline analysis. A step whose prune edge has no legal graft target
+    is skipped (still consumes one of max-steps), same as --hillclimb;
+    otherwise the walk runs the full <max-steps> and never stops early.
+
+    EXPERIMENTAL findings (sim.treefile, ~100 taxa/3000bp, JC model,
+    radius 10, 2000 steps, one run/one seed -- see runRandomWalk's own
+    comment in tree/spr_topology_test.cpp for the full numbers):
+    parsimony difference correlates moderately with likelihood difference
+    (Pearson r = -0.56; a reject-if-parsimony_diff > T rule gets a fairly
+    flat ~69% classification accuracy for any T from about -15 to +2,
+    versus a 53% baseline -- a real but not sharply-optimizable lift).
+    It says essentially nothing usable about RF difference in this setup:
+    the random start tree is already at RF=194 (the theoretical maximum
+    for 100 taxa), so a single uninformed move almost never changes RF at
+    all (only 14/1869 steps did, in one run) -- there isn't enough signal
+    to pick a threshold from, though the rare exceptions that did move RF
+    were consistent with the likelihood finding above.
+
+    This same run also surfaced a real, previously-shipped bug: this
+    tool's computeParsimony() silently scored every tree as 0
+    substitutions until Alignment::orderPatternByNumChars() is called
+    once per alignment (IQ-TREE's real pipeline does this; this tool
+    didn't). That means --hillclimb's "prescreen" flag never actually
+    rejected a single candidate, at any tolerance, before this was fixed
+    -- every prior prescreen timing/RF comparison was measuring RNG noise,
+    not the mechanism. Both --hillclimb and --randomwalk now call
+    orderPatternByNumChars once during setup; prescreen is a real filter
+    for the first time as of this fix, and its shipped tolerance has not
+    yet been retested against real (non-zero) parsimony scores.
+
+    Example:
+        build/spr_topology_test.exe --randomwalk sim.treefile 10 2000
+
+
+8) Unconditional-acceptance SPR random walk, LCA-subtree proxy (NOT a search)
+---------------------------------------------------------------------------------
+    build/spr_topology_test.exe --randomwalk-subtree <alisim-tree.treefile> <radius> <max-steps>
+
+    Same input files/conventions and "accept everything" design as
+    --randomwalk (command 7) -- see its rationale for why an unbiased,
+    unconditional-acceptance walk is the right tool for this kind of
+    measurement. Tests a different cheap proxy: instead of parsimony,
+    this scores just the LOCAL subtree spanning the prune and graft
+    positions.
+
+    Per step:
+      1. choosePrune()/chooseGraft() pick a candidate exactly like
+         --randomwalk.
+      2. Before applying: find L = LCA(pruneDad, graftDad) in the current
+         topology. Both attachment points are pruneDad/graftDad's own
+         descendants-or-self, so everything the move can possibly change
+         is confined to the clade hanging off L, away from tree.root --
+         that clade is "the subtree".
+      3. That clade is extracted as its own standalone small PhyloTree
+         (a full-precision Newick fragment -- NOT the 1-decimal display
+         rounding used elsewhere in this tool -- plus a projected
+         sub-alignment via Alignment::extractSubAlignment) with its own
+         fresh JC ModelFactory, and its own computeLikelihood() is taken
+         as "the subtree's likelihood, evaluated as if it were an
+         independent tree". This is genuinely local: it never touches
+         partial likelihoods for anything outside the clade.
+      4. The candidate is applied for real (applySPRTracked, never rolled
+         back, exactly like --randomwalk).
+      5. The same clade is re-located in the new topology (re-derived via
+         two reference leaves from opposite sides of the original split,
+         then EXPLICITLY VERIFIED to still cover the exact same leaf set
+         before trusting it -- the assumption that the boundary is always
+         preserved does NOT hold in every case, e.g. when the pruned
+         branch was itself one whole side of the LCA split; a step whose
+         leaf set doesn't verify is skipped for measurement purposes but
+         the move is still applied).
+      6. The subtree's likelihood is recomputed on the new topology, and
+         both the subtree's and the whole tree's likelihood changes are
+         recorded and compared.
+    A step whose subtree has fewer than 2 leaves skips the subtree-
+    specific measurement (still applies the move) same as any other skip
+    case in this file.
+
+    Writes step,subtree_leaves,subtree_logl_diff,whole_logl_diff to
+    stdout, and a fuller version (before/after/diff for both series, plus
+    per-step timings for each) to randomwalk_subtree_data.csv (repo root,
+    overwritten each run).
+
+    EXPERIMENTAL findings (sim.treefile, ~100 taxa/3000bp, JC model,
+    radius 10, 1000 steps/489 measured, one run/one seed -- see
+    runRandomWalkSubtree's own comment in tree/spr_topology_test.cpp for
+    the full numbers):
+      - Correlation is STRONG: Pearson r = 0.87 between the subtree's
+        likelihood change and the whole tree's, with 82% sign agreement
+        -- far stronger than the parsimony proxy tested in --randomwalk
+        (r=-0.56 there). This makes sense: the subtree contains every
+        node whose local topology actually changed, so its likelihood
+        captures most of what moved.
+      - Efficiency is NOT there, despite that correlation: this
+        implementation is SLOWER than just evaluating the whole tree, at
+        every subtree size tested (~1.3x slower for a 5-leaf subtree,
+        growing to ~3.7x slower for a 94-leaf one, while the whole-tree
+        cost stays flat around 10-11ms regardless of subtree size).
+        Rebuilding a standalone PhyloTree + projected sub-alignment +
+        fresh ModelFactory from scratch, twice per step, costs more than
+        the likelihood math it's supposedly saving -- even for a 5-leaf
+        subtree.
+      Bottom line: NOT worth using as a prescreen or a replacement for
+      the whole-tree likelihood check, as implemented -- it would add
+      cost on top of, not instead of, the existing check. The strong
+      correlation suggests this idea could still pay off with a cheaper
+      implementation (e.g. computing just the inner partial-likelihood
+      vector at the LCA branch directly on the existing tree object,
+      instead of constructing independent PhyloTree/Alignment/
+      ModelFactory objects each time), which was judged too risky to
+      get right without extensive testing for this pass.
+
+    Example:
+        build/spr_topology_test.exe --randomwalk-subtree sim.treefile 10 1000
 
 
 Generating input data with AliSim
@@ -288,13 +557,25 @@ main/alisim.cpp, which spr_topology_test deliberately does not link (see
 the header comment in tree/spr_topology_test.cpp for why). Build it once:
     cmake --build build --target iqtree3
 
-Then generate a tree+alignment pair, e.g. 15 taxa, Yule-Harding random
-tree, GTR model, 500bp:
-    build/iqtree3.exe --alisim sim -m GTR -t "RANDOM{yh/15}" --length 500 --seed 42 -af fasta -redo
+Then generate a tree+alignment pair, e.g. 100 taxa, Yule-Harding random
+tree, GTR model with explicit rates/frequencies, 10000bp (this is the
+exact command used to generate the sim.treefile/sim.fa checked into the
+repo root):
+    build/iqtree3.exe --alisim sim -m "GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}" -t "RANDOM{yh/100}" --length 10000 --seed 42 -af fasta -redo
 
 --seed is required (any integer; AliSim refuses to run without one so runs
 stay reproducible). -redo is only needed if sim.treefile/sim.fa already
 exist from a previous run in the same directory. By default, both generated files are stored in the main IQTREE3 folder.
+
+The GTR{...}+F{...} parameters are not cosmetic -- omitting them (plain
+"-m GTR") makes AliSim default to all-equal exchangeability rates (no more
+complex than JC despite the "GTR" label) and print two runtime warnings
+saying so ("we strongly recommend users to specify model parameters for
+more accuracy simulations", "GTR must have unequal base frequencies...").
+The rate order for GTR{...} is AC,AG,AT,CG,CT,GT and F{...} is A,C,G,T;
+the values above are arbitrary (not fit to real data) but explicit, which
+is what actually avoids the warnings -- substitute whatever rate/frequency
+skew suits what you're testing.
 
 iqtree3.exe is statically linked (see CMakeLists.txt, same fix as
 spr_topology_test) so it runs standalone with no PATH setup needed, same
@@ -328,3 +609,12 @@ Notes
   Skipping this crashes nondeterministically with either a "no buffer to
   reorient" assertion or a buffer-aliasing assertion, depending on the
   memory-saving mode in effect.
+- To test inbuilt NNI and RF distance:
+    rm -f sim.fa.ckp.gz
+    time ./build/iqtree3.exe -s sim.fa -m JC -redo 2>&1 | tail -20
+
+    then:
+
+    ./build/iqtree3.exe -t sim.treefile -rf sim.fa.treefile -pre rf_check 2>&1 | tail -5
+    cat rf_check.rfdist
+    rm -f rf_check.rfdist rf_check.log
