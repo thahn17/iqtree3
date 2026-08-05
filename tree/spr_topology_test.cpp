@@ -2466,6 +2466,68 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     }
     alnCheck.close();
 
+    // GTR+FO (ML-estimated rates and frequencies) instead of a plain JC
+    // model: sim.fa was simulated under GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}
+    // (see the AliSim command in this tool's usage doc), so searching under
+    // JC -- which has no free rate/frequency parameters to fit at all --
+    // is a deliberately misspecified model, not just a simplification. See
+    // useGtrModel's comment on runHillClimb for why this matters
+    // specifically for whether periodic re-optimization is worth its cost.
+    // Computed here, before any of the (possibly slow) setup below, since
+    // it's needed for this run's own printed settings summary and
+    // iqtreeStart's own preprocessing alike.
+    string modelName = useGtrModel ? "GTR+FO" : "JC";
+    string recordTag = buildRecordTag(useFastSelection, reoptimizeBranchLengths, fullReoptEveryNSteps,
+            investigateFlag, investigateRadius, alternateFlag, shrinkFlag, sweepFlag, sweepCount,
+            findoptEveryNSteps);
+
+    // print this run's own settings BEFORE building the starting tree,
+    // not after: constructing it (BioNJ is near-instant, but iqtreeStart's
+    // own parsimony-pool preprocessing can take tens of seconds -- see its
+    // own comment) used to leave the terminal completely silent until it
+    // finished, which looks indistinguishable from a hang on a slow run.
+    // Only the "start tree" line itself (needs the actual tree/curScore)
+    // and its own timing still have to wait until after that setup below.
+    cout << "radius          : " << radius << endl;
+    cout << "max steps       : " << maxSteps << endl;
+    if (iqtreeStart)
+        cout << "iqtreestart     : best of " << iqtreeStartPoolSize << " parsimony pool tree(s)" << endl;
+    if (useFastSelection)
+        cout << "selection       : fast (choosePrune/chooseGraft proposal, not exhaustive)"
+             << (numCandidates > 1 ? ", " + to_string(numCandidates) + " candidates/step" : "") << endl;
+    if (reoptimizeBranchLengths)
+        cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on each candidate's 3 "
+                "changed edges before scoring, experimental" << endl;
+    if (fullReoptEveryNSteps > 0)
+        cout << "full reopt      : whole-tree "
+             << (useGtrModel ? "optimizeParameters() (model + branch lengths)"
+                             : "optimizeAllBranches(" + to_string(fullReoptRounds) + " round(s))")
+             << " sweep every " << fullReoptEveryNSteps << " step(s)"
+             << (fullReoptInitialFit ? ", plus one up front on the starting tree" : "")
+             << ", experimental" << endl;
+    if (useGtrModel)
+        cout << "model           : GTR+FO (ML-estimated rates/frequencies), experimental" << endl;
+    if (recordProgress)
+        cout << "record          : appending to " << recordSpreadsheetPath(modelName, recordTag)
+             << ", experimental" << endl;
+    if (investigateFlag)
+        cout << "investigate     : refine each accepted move within " << investigateRadius
+             << " real hop(s) next step, experimental" << endl;
+    if (alternateFlag)
+        cout << "alternate       : toggling every other step between SPR (radius " << radius
+             << ") and NNI (radius 1), experimental" << endl;
+    if (shrinkFlag)
+        cout << "shrink          : radius starts at " << radius << ", narrows by 1 (floor 1) after "
+             << shrinkStallThreshold << " consecutive non-improving steps, experimental" << endl;
+    if (sweepFlag)
+        cout << "sweep           : after all steps finish, exhaustive whole-tree regraft search on the "
+             << sweepCount << " least-compatible sibling pair(s) (adjacent_subtree_compatibility.pdf), "
+                "experimental" << endl;
+    if (findoptEveryNSteps > 0)
+        cout << "findopt         : every " << findoptEveryNSteps << " step(s), scratch whole-tree "
+                "optimizeParameters() (GTR+FO model + branch lengths, always, regardless of 'gtr') "
+                "refit on a rolled-back copy (main tree unaffected), experimental" << endl;
+
     // the original AliSim tree, kept as a separate plain tree purely for
     // the final RF-distance comparison -- never touched by any SPR move
     PhyloTree trueTree;
@@ -2498,18 +2560,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     InputType intype;
     Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
 
-    // GTR+FO (ML-estimated rates and frequencies) instead of a plain JC
-    // model: sim.fa was simulated under GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}
-    // (see the AliSim command in this tool's usage doc), so searching under
-    // JC -- which has no free rate/frequency parameters to fit at all --
-    // is a deliberately misspecified model, not just a simplification. See
-    // useGtrModel's comment on runHillClimb for why this matters
-    // specifically for whether periodic re-optimization is worth its cost.
-    // Computed here, before the starting-tree branch below, since
-    // iqtreeStart's own preprocessing needs to know which model to score
-    // its candidate pool under.
-    string modelName = useGtrModel ? "GTR+FO" : "JC";
-
+    // modelName was already computed above, before this run's settings
+    // summary was printed
     PhyloTree tree(aln);
     tree.setParams(&params);
     if (randomStart) {
@@ -2684,50 +2736,18 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
 
     cout.rdbuf(realCoutBuf);
 
+    // cpuClockStart was set at the very top of this function, before any
+    // of the (possibly slow, always cout-suppressed) setup above -- so
+    // this is exactly the CPU-clock cost of building/scoring the starting
+    // tree, before the step loop below ever runs its first candidate.
+    // Every other timing in this tool is CPU-clock-based for the same
+    // reason (see runHillClimb's own comment on `quiet`), so this reuses
+    // that same clock/baseline rather than starting a separate one.
+    double startTreeCpuTime = getCPUTime() - cpuClockStart;
+
     cout << (randomStart ? "random start tree: " : (iqtreeStart ? "iqtree start tree: " : "BioNJ start tree : "))
          << newickOf(tree) << " (logL = " << curScore << ")" << endl;
-    if (iqtreeStart)
-        cout << "iqtreestart     : best of " << iqtreeStartPoolSize << " parsimony pool tree(s)" << endl;
-    cout << "radius          : " << radius << endl;
-    cout << "max steps       : " << maxSteps << endl;
-    if (useFastSelection)
-        cout << "selection       : fast (choosePrune/chooseGraft proposal, not exhaustive)"
-             << (numCandidates > 1 ? ", " + to_string(numCandidates) + " candidates/step" : "") << endl;
-    if (reoptimizeBranchLengths)
-        cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on each candidate's 3 "
-                "changed edges before scoring, experimental" << endl;
-    if (fullReoptEveryNSteps > 0)
-        cout << "full reopt      : whole-tree "
-             << (useGtrModel ? "optimizeParameters() (model + branch lengths)"
-                             : "optimizeAllBranches(" + to_string(fullReoptRounds) + " round(s))")
-             << " sweep every " << fullReoptEveryNSteps << " step(s)"
-             << (fullReoptInitialFit ? ", plus one up front on the starting tree" : "")
-             << ", experimental" << endl;
-    if (useGtrModel)
-        cout << "model           : GTR+FO (ML-estimated rates/frequencies), experimental" << endl;
-    string recordTag = buildRecordTag(useFastSelection, reoptimizeBranchLengths, fullReoptEveryNSteps,
-            investigateFlag, investigateRadius, alternateFlag, shrinkFlag, sweepFlag, sweepCount,
-            findoptEveryNSteps);
-    if (recordProgress)
-        cout << "record          : appending to " << recordSpreadsheetPath(modelName, recordTag)
-             << ", experimental" << endl;
-    if (investigateFlag)
-        cout << "investigate     : refine each accepted move within " << investigateRadius
-             << " real hop(s) next step, experimental" << endl;
-    if (alternateFlag)
-        cout << "alternate       : toggling every other step between SPR (radius " << radius
-             << ") and NNI (radius 1), experimental" << endl;
-    if (shrinkFlag)
-        cout << "shrink          : radius starts at " << radius << ", narrows by 1 (floor 1) after "
-             << shrinkStallThreshold << " consecutive non-improving steps, experimental" << endl;
-    if (sweepFlag)
-        cout << "sweep           : after all steps finish, exhaustive whole-tree regraft search on the "
-             << sweepCount << " least-compatible sibling pair(s) (adjacent_subtree_compatibility.pdf), "
-                "experimental" << endl;
-    if (findoptEveryNSteps > 0)
-        cout << "findopt         : every " << findoptEveryNSteps << " step(s), scratch whole-tree "
-                "optimizeParameters() (GTR+FO model + branch lengths, always, regardless of 'gtr') "
-                "refit on a rolled-back copy (main tree unaffected), experimental" << endl;
+    cout << "start tree time : " << fixed << setprecision(2) << startTreeCpuTime << " sec (CPU)" << endl;
 
     string runId = buildRunId(radius, maxSteps, randomStart, useFastSelection,
             numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds, fullReoptInitialFit,
