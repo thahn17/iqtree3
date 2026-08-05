@@ -142,7 +142,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]]
+    build/spr_topology_test.exe --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]]
 
     First, generate a ground-truth tree and a DNA alignment simulated along
     it with the real iqtree3 binary's built-in AliSim feature (needs the
@@ -163,7 +163,8 @@ Tree argument convention (used by every command that takes a tree):
     own default output naming) -- there is no separate alignment argument.
 
     Algorithm: build a BioNJ estimate tree from the alignment's distance
-    matrix (or a random Yule-Harding tree if "random" is given), then
+    matrix (or a random Yule-Harding tree if "random" is given, or
+    buildIQTreeStyleStartTree's own result if "iqtreestart" is given), then
     repeat up to <max-steps> times: pick a uniformly random prune edge via
     choosePrune(), pick a regraft target (every legal candidate within
     <radius> hops, scored exhaustively via findGraftPositions -- or N
@@ -175,15 +176,45 @@ Tree argument convention (used by every command that takes a tree):
 
     Optional trailing flags, any order:
       random        start from a random Yule-Harding tree instead of BioNJ
+      iqtreestart [N]  start from a tree built the same SHAPE way real
+                     IQ-TREE builds its own: generate N (default 20)
+                     independent randomized-stepwise-addition parsimony
+                     trees (PhyloTree::computeParsimonyTree -- IQ-TREE's
+                     own native, non-PLL parsimony kernel; real IQ-TREE's
+                     actual default start-tree method uses PLL's own
+                     parsimony kernel instead, which this standalone tool
+                     has no other reason to ever set up, so this is the
+                     same KIND of preprocessing, one of IQ-TREE's own
+                     selectable methods ("-t PARS"), but not byte-for-byte
+                     its true default), give each a light branch-length
+                     polish and a likelihood score, and keep the single
+                     best-scoring one -- mirroring the SHAPE of
+                     IQTree::computeInitialTree/initCandidateTreeSet
+                     (tree/iqtree.cpp) at a smaller scale (real IQ-TREE's
+                     own default pool is closer to 100 trees). Does NOT
+                     also NNI/SPR-refine that winner itself before handing
+                     it off -- the step loop above (radius/fast/reopt/
+                     etc., whatever was actually given on the command
+                     line) does all of that refinement, exactly the same
+                     way it already does starting from a plain BioNJ or
+                     random tree; iqtreestart only ever changes where the
+                     search starts, never how it searches from there.
+                     Scored under "gtr"'s own model when that flag is also
+                     given, so a "gtr iqtreestart" run picks its starting
+                     tree by GTR+FO likelihood, not JC's. Mutually
+                     exclusive with "random" (parseHillClimbFlags rejects
+                     giving both). EXPERIMENTAL
       fast [N]      propose N (default 1) random chooseGraft() candidates
                      per step instead of scoring every candidate within
                      <radius> exhaustively -- much cheaper per step, at
                      the cost of not guaranteeing the best move in the
                      radius is found
       quiet         suppress per-step output; only the header and final
-                     summary are printed (useful for long runs -- printing
-                     a full line every step can add real wall-clock
-                     overhead in an interactive terminal)
+                     summary are printed (useful for long runs -- all
+                     timing in this tool is measured via CPU-clock time,
+                     not wall-clock, so a slow-to-render terminal doesn't
+                     inflate the reported time either way, but printing a
+                     full line every step still has a real CPU cost)
       reopt         re-optimize (Newton-Raphson) the 3 edges an SPR move
                      changes before scoring it, instead of trusting
                      applySPR's naive placeholder lengths (matches how
@@ -276,7 +307,7 @@ Tree argument convention (used by every command that takes a tree):
                      file expecting genuine search progress. Because the
                      refit+restore round trip is real work with no
                      counterpart in the actual search's own cost, its
-                     wall-clock cost is excluded from the run's own timing
+                     CPU-clock cost is excluded from the run's own timing
                      entirely ("pausing the timer" around it). Replaces
                      the old, single-shot, curScore-mutating "finalreopt".
                      EXPERIMENTAL
@@ -285,13 +316,18 @@ Tree argument convention (used by every command that takes a tree):
     original AliSim tree and the final tree, and writes both trees plus
     the RF distance to output.txt in the current directory (overwritten
     every run). Also creates spr_hillclimb_tmp.* temporary files (BioNJ's
-    distance matrix and tree) unless starting from "random". Exit code 0
-    on success (even if zero steps improved); 1 if the alignment couldn't
-    be found next to the tree file.
+    distance matrix and tree) unless starting from "random" or
+    "iqtreestart". Exit code 0 on success (even if zero steps improved); 1
+    if the alignment couldn't be found next to the tree file.
 
     Examples:
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 iqtreestart
+                                                        (parsimony pool + NNI-polished start,
+                                                         mirrors real IQ-TREE's own preprocessing)
+        build/spr_topology_test.exe --hillclimb sim.treefile 6 10 iqtreestart 50 gtr
+                                                        (50-tree pool, scored/searched under GTR+FO)
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 fast 5   (5 candidates/step, keep the best)
         build/spr_topology_test.exe --hillclimb sim.treefile 6 10 random fast
@@ -499,6 +535,26 @@ Notes
   memory-saving mode in effect.
 -To run an inbuilt NNI test:
   iqtree3 -s sim.fa -m GTR
+
+-To record iqtree3's own built-in stochastic NNI search (not spr_topology_test's
+ SPR API) into a record_<model>_iqtree_nni_ownstart.csv, same columns as
+ --hillclimb's own "record" flag, own BIONJ/parsimony start (sim.treefile is only
+ used afterwards, in a separate -te run, to compute the true_minus_current
+ reference column -- never fed to the search itself), and full wall-clock timing
+ from process launch to exit (corrected for IQ-TREE's own per-iteration "Time:"
+ field only starting once its own start tree already exists -- see the script's
+ header comment for why):
+  test_scripts/record_iqtree_nni.ps1 <alisim-tree.treefile> <nstop> [gtr] [quiet]
+  (or, if PowerShell script execution is disabled on your system, the
+  functionally identical Git Bash / MSYS2 bash port, no execution policy
+  needed:)
+  test_scripts/record_iqtree_nni.sh <alisim-tree.treefile> <nstop> [gtr] [quiet]
+
+  Examples:
+    test_scripts/record_iqtree_nni.ps1 sim.treefile 100
+    test_scripts/record_iqtree_nni.ps1 sim.treefile 100 gtr quiet
+    test_scripts/record_iqtree_nni.sh sim.treefile 100
+    test_scripts/record_iqtree_nni.sh sim.treefile 100 gtr quiet
 
 -To find the RF distance between sim.treefile and sim.fa.treefile:
   ./build/iqtree3.exe -t sim.treefile -rf sim.fa.treefile -pre rf_check 2>&1 | tail -5
