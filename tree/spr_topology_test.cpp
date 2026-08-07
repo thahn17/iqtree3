@@ -639,51 +639,113 @@ int chooseGraftDistance(int r) {
 }
 
 /**
+    if `raw` (one of `from`'s real neighbors) is pruneDad, returns
+    pruneDad's OTHER non-pruneNode neighbor instead of pruneDad itself --
+    collapsing the walk's view of pruneDad exactly the way applySPR will
+    collapse it for real once the prune actually happens (pruneDad gets
+    suppressed, and its two remaining neighbors become directly connected
+    to each other). pruneDad's own edges are never a legal regraft target
+    (they don't survive the prune -- see isLegalSPR), so rather than let
+    the walk stop ON pruneDad and special-case every consumer of
+    dad/node/grandDad to tolerate that, this makes pruneDad invisible to
+    the walk entirely: "passing through" it is folded into a single
+    ordinary hop, as if `from` were already directly connected to whatever
+    lies on pruneDad's far side. Returns `raw` unchanged if it isn't
+    pruneDad in the first place.
+
+    `from` must actually be adjacent to pruneDad whenever raw==pruneDad
+    (true by construction everywhere this is called: it's only invoked on
+    a real neighbor of `from` that turned out to be pruneDad, so `from` is
+    one of pruneDad's own two non-pruneNode neighbors) -- pruneDad's three
+    neighbors are then pruneNode, `from`, and exactly one more, which is
+    what gets returned.
+ */
+PhyloNode* collapsePruneDad(PhyloNode *from, PhyloNode *raw, PhyloNode *pruneDad, PhyloNode *pruneNode) {
+    if (raw != pruneDad)
+        return raw;
+    FOR_NEIGHBOR_IT(pruneDad, from, it)
+        if ((*it)->node != pruneNode)
+            return (PhyloNode*) (*it)->node;
+    ASSERT(0 && "pruneDad always has exactly one non-pruneNode neighbor besides `from`");
+    return nullptr;
+}
+
+/**
+    true if `a` and `b` are adjacent in the collapsed view chooseGraft
+    operates on (see collapsePruneDad) -- either really adjacent, or both
+    directly incident to pruneDad, which collapsePruneDad papers over as a
+    single edge directly between them.
+ */
+bool virtuallyAdjacent(PhyloNode *a, PhyloNode *b, PhyloNode *pruneDad) {
+    return a->isNeighbor(b) || (a->isNeighbor(pruneDad) && b->isNeighbor(pruneDad));
+}
+
+/**
     pick a single random SPR regraft target for the (pruneNode,pruneDad)
     edge choosePrune() already selected, via a directed random walk instead
     of enumerating every legal candidate the way findGraftPositions does --
     O(distance walked) rather than O(candidates within radius r).
 
+    The walk operates entirely on a COLLAPSED view of the tree: pruneDad's
+    two non-pruneNode edges are treated as a single, ordinary edge directly
+    between its two siblings (see collapsePruneDad/virtuallyAdjacent) --
+    exactly the topology that will exist once the prune actually happens
+    and pruneDad gets suppressed for real. pruneDad itself is therefore
+    never visible to the walk at all: it never becomes `dad`, `node`, or
+    `grandDad`, so none of the tier logic below needs to know pruneDad
+    exists, or reason about how many steps are left before the walk has to
+    stop touching it -- every candidate this produces is a real, ordinary
+    edge in the tree, full stop. (An earlier version of this function
+    tried to allow dad/node to transiently equal pruneDad, gated by how
+    many steps remained -- correctly reasoned in isolation, but each fix
+    for one illegal case kept exposing another, since pruneDad's
+    "everything funnels through one deterministic exit" shape doesn't
+    behave like an ordinary node under tier 1's forced-priority walk.
+    Collapsing it away entirely sidesteps that whole family of cases
+    instead of enumerating them.)
+
     First picks a target distance d in [1,r] via chooseGraftDistance (see
     graftDistanceWeight to change how distance is weighted). Then walks d
     steps starting from "the edge above the pruned edge" -- the
-    (sibling1,sibling2) edge that would exist once pruneDad is suppressed,
-    even though pruneDad hasn't actually been suppressed yet (this mirrors
-    findGraftPositions: pruneDad's own edges are never legal targets, so
-    this is exactly where a graft-target search actually begins).
+    (sibling1,sibling2) edge that exists in the collapsed view above, which
+    is exactly where a graft-target search should begin (mirrors
+    findGraftPositions: pruneDad's own edges are never legal targets).
 
     Step 1 is a special case: pick uniformly among every real edge incident
     to sibling1 or sibling2 (excluding their shared edge to pruneDad --
-    that's the illegal "start edge" itself, never a candidate at all).
+    that's the illegal "start edge" itself, never a candidate at all; it
+    can't reappear as a candidate later either, since collapsePruneDad
+    never returns pruneDad).
 
     Steps 2..d: only 3 pointers are ever tracked -- grandDad, dad, node --
     where (dad,node) is the current edge and (grandDad,dad) is the edge the
-    walk was on immediately before this one. There's no history beyond
-    that single edge: grandDad is overwritten on every move (including
-    tier 2's sideways ones), always to whichever node was just displaced,
-    so it's always "the edge just come from" for whatever the new current
-    edge is -- never a deeper record of how the walk got there. Prefer, in
-    order:
-      1. node's other edges (walk further outward; up to 2 candidates):
-         grandDad=dad, dad=node, node=<pick>
+    walk was on immediately before this one (both in the collapsed sense).
+    There's no history beyond that single edge: grandDad is overwritten on
+    every move (including tier 2's sideways ones), always to whichever node
+    was just displaced, so it's always "the edge just come from" for
+    whatever the new current edge is -- never a deeper record of how the
+    walk got there. Prefer, in order:
+      1. node's other edges (walk further outward; up to 2 candidates,
+         each passed through collapsePruneDad): grandDad=dad, dad=node,
+         node=<pick>
       2. dad's remaining edge, other than the one leading back to grandDad
          (a sideways step onto dad's other, not-yet-explored branch; at
-         most 1 candidate, and -- since dad is always degree 3 here --
-         effectively always exactly 1): grandDad=node, node=<pick> (dad
-         unchanged)
+         most 1 candidate after collapsing, and -- since dad is always
+         degree 3 here -- effectively always exactly 1): grandDad=node,
+         node=<pick> (dad unchanged)
       3. the edge just come from, (grandDad,dad) -- this is not a special
          "undo" move, just the lowest-priority option, tried only when
          neither of the above has anything to offer: dad=grandDad,
          node=dad, grandDad=node (using each variable's value from before
          this reassignment). Only usable when grandDad is actually still
-         adjacent to dad, which holds right after step 1 and right after a
-         tier-1 move, but not in general right after an earlier tier-3 move
-         itself (grandDad then refers to whatever node just got displaced,
-         two hops from the new dad, not one) -- so two tier-3 moves never
-         fire back to back; that's checked directly (dad->isNeighbor(
-         grandDad)) rather than assumed, since without it two-in-a-row
-         would fabricate a "current edge" between nodes that were never
-         actually adjacent
+         (virtually) adjacent to dad, which holds right after step 1 and
+         right after a tier-1 move, but not in general right after an
+         earlier tier-3 move itself (grandDad then refers to whatever node
+         just got displaced, two hops from the new dad, not one) -- so two
+         tier-3 moves never fire back to back; that's checked directly
+         (virtuallyAdjacent(dad, grandDad, pruneDad)) rather than assumed,
+         since without it two-in-a-row would fabricate a "current edge"
+         between nodes that were never actually (virtually) adjacent
     Ties within whichever tier is chosen are broken uniformly at random.
 
     Two things are excluded from ever being selected as dad or node at all,
@@ -691,19 +753,11 @@ int chooseGraftDistance(int r) {
     rejects grafting onto its edge, regardless of distance -- and since
     that leaf could be anywhere in the tree, not just near the prune point,
     it has to be filtered out of every tier's candidates, not assumed
-    unreachable), and pruneNode itself (tier 3 can reach back through
-    pruneDad -- see below -- and must never continue on into the very
-    subtree being pruned).
-
-    pruneDad itself can end up as dad mid-walk (reachable via tier 3 right
-    after step 1, since grandDad starts out equal to pruneDad there), but
-    never as the walk's FINAL position, since that's the one edge no legal
-    regraft target can ever be: tier 3 is skipped as the last move if
-    grandDad is pruneDad (that would make dad=pruneDad the result), and
-    separately, if dad is already pruneDad going into the last step, tier 2
-    is skipped too, since it never changes dad -- only tier 1 is guaranteed
-    to move dad away from pruneDad, so it's the only option left in that
-    situation.
+    unreachable), and pruneNode itself (tier 3 can reach back through the
+    collapsed pruneDad -- see above -- and must never continue on into the
+    very subtree being pruned). pruneDad itself needs no such check here:
+    collapsePruneDad guarantees it can never be produced as a candidate in
+    the first place, so there's nothing to filter.
 
     With all that excluded up front, every candidate this walk can ever
     produce is legal by construction, unlike findGraftPositions which
@@ -715,8 +769,8 @@ int chooseGraftDistance(int r) {
     outDistance, if non-null, receives the walk length d that was chosen
     (not necessarily the true hop-distance of the final edge from the
     prune point -- tier 2/3 moves don't always change hop-distance the way
-    a pure tier-1 walk would -- just the number of random-walk steps
-    taken, for logging purposes).
+    a pure tier-1 walk would, and neither does collapsing past pruneDad --
+    just the number of random-walk steps taken, for logging purposes).
 
     @return false if there is no edge to graft onto at all (sibling1 and
     sibling2 are both leaves, e.g. a 3-leaf tree)
@@ -732,15 +786,20 @@ bool chooseGraft(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int
     // from the prune point; since that leaf could be anywhere in the tree,
     // every candidate-building step below excludes it, exactly as if it
     // had no edge to offer at all (it's a real leaf otherwise, so this is
-    // one of two exclusions beyond the usual tier logic -- see pruneNode
-    // below for the other)
+    // the one exclusion beyond the usual tier logic that pruneDad's own
+    // collapsing doesn't already take care of -- see pruneNode above)
     PhyloNode *root = (PhyloNode*) tree.root;
 
     // step 1 (special case): every real edge off sibling1 or sibling2,
-    // excluding the edge back to pruneDad
+    // excluding the edge back to pruneDad. sibling1/sibling2 are also kept
+    // around so grandDad can be initialized to "whichever sibling wasn't
+    // picked" -- in the collapsed view this function operates in, that's
+    // the true far end of "the edge before dad", not pruneDad itself.
     vector<pair<PhyloNode*, PhyloNode*> > firstStep; // (dad=near, node=far)
+    PhyloNode *sibling1 = nullptr, *sibling2 = nullptr;
     FOR_NEIGHBOR_IT(pruneDad, pruneNode, it) {
         PhyloNode *sibling = (PhyloNode*) (*it)->node;
+        if (!sibling1) sibling1 = sibling; else sibling2 = sibling;
         FOR_NEIGHBOR_IT(sibling, pruneDad, it2)
             if ((*it2)->node != root)
                 firstStep.push_back(make_pair(sibling, (PhyloNode*) (*it2)->node));
@@ -749,39 +808,40 @@ bool chooseGraft(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int
         return false;
 
     pair<PhyloNode*, PhyloNode*> chosen = firstStep[random_int((int) firstStep.size())];
-    // grandDad is the other end of the edge the walk was just on -- always
-    // pruneDad itself right after step 1, since that's the edge (sibling,
-    // pruneDad) the walk left to get here
-    PhyloNode *grandDad = pruneDad;
     PhyloNode *dad = chosen.first;
     PhyloNode *node = chosen.second;
+    // grandDad is the other end of the edge the walk was just on -- in the
+    // collapsed view, that's dad's sibling on the OTHER side of pruneDad
+    // (see this function's own comment above), not pruneDad itself
+    PhyloNode *grandDad = (dad == sibling1) ? sibling2 : sibling1;
 
     for (int step = 2; step <= d; step++) {
-        // pruneDad is excluded here (in addition to root/pruneNode) since
-        // it can only ever legitimately become dad, via the tier-3
-        // crossing below, which sets dad directly and never consults these
-        // lists; letting it slip in here as a tier-1/tier-2 candidate would
-        // instead make it `node`, e.g. whenever node currently sits at one
-        // of pruneDad's own siblings and dad is one hop further out --
-        // `node`'s own neighbors then legitimately include pruneDad -- and
-        // node==pruneDad is exactly as illegal as dad==pruneDad
+        // a candidate produced by actually collapsing pruneDad (raw ==
+        // pruneDad, as opposed to collapsePruneDad just handing back an
+        // ordinary unrelated neighbor) pairs two of pruneDad's own
+        // siblings together -- real nodes, but NOT actually adjacent to
+        // each other yet, since pruneDad hasn't been suppressed at the
+        // time chooseGraft runs (that only happens later, for real, inside
+        // applySPR). Fine as a mid-walk waypoint -- the very next step
+        // immediately continues past it to a real edge -- but on the very
+        // last step, the walk has to STOP here, and stopping on an edge
+        // that doesn't exist yet is exactly what isLegalSPR's own
+        // isNeighbor check would (correctly) reject. So collapsed
+        // candidates are only excluded on the final step, same as
+        // root/pruneNode are excluded always.
+        bool isLastStep = (step == d);
         vector<PhyloNode*> tier1, tier2;
-        FOR_NEIGHBOR_IT(node, dad, it)
-            if ((*it)->node != root && (*it)->node != pruneNode && (*it)->node != pruneDad)
-                tier1.push_back((PhyloNode*) (*it)->node);
-
-        // on the last step, dad must not still be pruneDad afterward (that
-        // would make the final answer pruneDad's own edge); tier 1 always
-        // moves dad away from pruneDad (dad becomes node, which by
-        // construction is never pruneDad), but tier 2 never changes dad at
-        // all -- so if dad is already pruneDad, tier 2 must be skipped on
-        // the last step, forcing tier 1 (or, failing that, nothing) to fire
-        bool mustLeavePruneDad = (step == d) && (dad == pruneDad);
-        if (!mustLeavePruneDad) {
-            FOR_NEIGHBOR_IT(dad, node, it)
-                if ((*it)->node != grandDad && (*it)->node != root && (*it)->node != pruneNode
-                        && (*it)->node != pruneDad)
-                    tier2.push_back((PhyloNode*) (*it)->node);
+        FOR_NEIGHBOR_IT(node, dad, it) {
+            PhyloNode *raw = (PhyloNode*) (*it)->node;
+            PhyloNode *cand = collapsePruneDad(node, raw, pruneDad, pruneNode);
+            if (cand != root && cand != pruneNode && !(isLastStep && raw == pruneDad))
+                tier1.push_back(cand);
+        }
+        FOR_NEIGHBOR_IT(dad, node, it) {
+            PhyloNode *raw = (PhyloNode*) (*it)->node;
+            PhyloNode *cand = collapsePruneDad(dad, raw, pruneDad, pruneNode);
+            if (cand != grandDad && cand != root && cand != pruneNode && !(isLastStep && raw == pruneDad))
+                tier2.push_back(cand);
         }
 
         if (!tier1.empty()) {
@@ -791,28 +851,41 @@ bool chooseGraft(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int
         } else if (!tier2.empty()) {
             grandDad = node;
             node = tier2[random_int((int) tier2.size())];
-        } else if (dad->isNeighbor(grandDad) && !(step == d && grandDad == pruneDad)) {
+        } else if (virtuallyAdjacent(dad, grandDad, pruneDad)
+                && (!isLastStep || dad->isNeighbor(grandDad))) {
+            // with pruneDad collapsed away, tier 3 is only reached in one
+            // irreducible case: `node` is a genuine leaf (tier 1 has
+            // nothing to extend to) AND dad's one remaining real neighbor
+            // (tier 2's only possible candidate -- dad is always degree 3,
+            // and node/grandDad already account for the other two slots)
+            // is specifically the root leaf. Nothing else can close off
+            // both tiers at once: every internal node still has a real
+            // tier-1 option (only root is ever excludable), and tier 2's
+            // one slot doesn't care whether grandDad itself is a leaf --
+            // that's a property of a DIFFERENT node than the one tier 2
+            // actually examines.
+            //
             // tier 3 (the edge just come from): only a real candidate if
-            // grandDad is still actually adjacent to dad -- which is true
-            // right after step 1, and right after a tier-1 move, but NOT
-            // in general right after an earlier tier-3 move itself (that
-            // reassigns grandDad to whatever node just got displaced,
-            // which sits two hops away from the new dad, not one) --
-            // requiring the check here, rather than assuming tier 3 always
-            // has a valid destination, is what stops two tier-3 moves in a
-            // row from producing a nonexistent "edge" between unrelated
-            // nodes (caught by the isLegalSPR ASSERT below during testing).
-            // Also skipped as the last move if it would make the result
-            // pruneDad's own edge (grandDad==pruneDad would become
-            // dad==pruneDad)
+            // grandDad is still (virtually) adjacent to dad -- which is
+            // true right after step 1, and right after a tier-1 move, but
+            // NOT in general right after an earlier tier-3 move itself
+            // (that reassigns grandDad to whatever node just got
+            // displaced, which sits two hops away from the new dad, not
+            // one) -- requiring the check here, rather than assuming
+            // tier 3 always has a valid destination, is what stops two
+            // tier-3 moves in a row from producing a nonexistent "edge"
+            // between unrelated nodes (caught by the isLegalSPR ASSERT
+            // below during testing). On the last step specifically,
+            // virtual adjacency alone isn't enough either, for the same
+            // not-a-real-edge-yet reason as the collapsed candidates
+            // above -- real adjacency is required there.
             PhyloNode *oldDad = dad, *oldNode = node;
             dad = grandDad;
             node = oldDad;
             grandDad = oldNode;
         }
         // else: no legal move at all this step (only possible in a tiny
-        // tree, or when mustLeavePruneDad forbids the only tier that would
-        // otherwise fire); nothing to do
+        // tree); nothing to do
     }
 
     outDad = dad;
