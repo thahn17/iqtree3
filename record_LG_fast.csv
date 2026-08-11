@@ -1,0 +1,4 @@
+run_id,candidates,time_elapsed,logL,true_minus_current
+20260811-133326_r5_s3_fast,0,83.5781,-127072871.413,nan
+20260811-133326_r5_s3_fast,2,145.016,-127038712.493,nan
+20260811-133326_r5_s3_fast,3,168.594,-127038712.493,nan

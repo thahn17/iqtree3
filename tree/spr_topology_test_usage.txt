@@ -100,16 +100,21 @@ Tree argument convention (used by every command that takes a tree):
 ------------------------------------------------------------
     build/spr_topology_test --likelihood <tree> <alignment.fasta>
 
-    Loads a real DNA alignment and evaluates the log-likelihood of the
-    given tree topology and branch lengths against it, under plain JC with
-    no rate heterogeneity and no optimization -- this reports the
-    likelihood of the tree exactly as given, not the best achievable
-    likelihood for that topology. Requires the alignment's sequence names
-    to match the tree's leaf names exactly. Prints alignment/model summary
-    plus the log-likelihood, along with IQ-TREE's normal alignment-reading
+    Loads a real DNA or protein alignment -- sequence type auto-detected
+    from content (Alignment::detectSequenceType), not read from a flag --
+    and evaluates the log-likelihood of the given tree topology and branch
+    lengths against it, under a plain fixed-parameter model (JC for DNA, LG
+    for protein) with no rate heterogeneity and no optimization -- this
+    reports the likelihood of the tree exactly as given, not the best
+    achievable likelihood for that topology. Requires the alignment's
+    sequence names to match the tree's leaf names exactly. Prints
+    alignment/model summary (including the detected sequence type) plus the
+    log-likelihood, along with IQ-TREE's normal alignment-reading
     diagnostics (composition/gap warnings etc., expected, not an error).
     Exit code 0 on success; 1 if the alignment file couldn't be opened; 2
-    if the tree/alignment taxa don't match or the alignment is malformed.
+    if the tree/alignment taxa don't match, the alignment is malformed, or
+    its sequence type isn't DNA or protein (this tool doesn't handle
+    binary/morph/codon/PoMo data).
 
     Examples (verified against real fixtures in test_scripts/test_data/):
         build/spr_topology_test --likelihood test_scripts/test_data/small.top.txt test_scripts/test_data/small.fa
@@ -118,7 +123,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]]
+    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree]
 
     First, generate a ground-truth tree and a DNA alignment simulated
     along it with the full iqtree3 binary's built-in AliSim feature (a
@@ -136,6 +141,15 @@ Tree argument convention (used by every command that takes a tree):
     alignment). Feed the .treefile to --hillclimb; the alignment path is
     derived automatically by replacing ".treefile" with ".fa" -- there is
     no separate alignment argument.
+
+    The alignment's sequence type (DNA or protein) is auto-detected from
+    its content (Alignment::detectSequenceType), not read from a flag, so
+    a protein alignment/tree pair (from any source, not just AliSim -- the
+    example above simulates DNA specifically) works the same way: JC
+    becomes LG and GTR+FO becomes LG+FO throughout (see "gtr" below), with
+    everything else about the search unchanged. Only DNA and protein are
+    supported; any other detected sequence type (binary, morphological,
+    codon, PoMo) is a fatal error.
 
     Algorithm: build a BioNJ estimate tree from the alignment's distance
     matrix (or a random Yule-Harding tree if "random", or
@@ -181,9 +195,11 @@ Tree argument convention (used by every command that takes a tree):
                      also ML-optimizes the whole starting tree up front.
                      No measurable accuracy benefit found over plain reopt
       gtr            search under GTR+FO instead of JC (matches sim.fa's
-                     simulation model); only meaningful combined with
-                     reopt/fullreopt/findopt, since JC has no model
-                     parameters to fit
+                     simulation model) for a DNA alignment, or LG+FO instead
+                     of plain LG for a protein alignment (sequence type
+                     auto-detected); only meaningful combined with
+                     reopt/fullreopt/findopt, since JC/LG alone have no (or
+                     fixed) model parameters to fit
       record         append this run's convergence trajectory (candidates
                      evaluated, wall time, current logL, gap to the true
                      tree's logL) to record_<model><tag>.csv in the repo
@@ -210,7 +226,8 @@ Tree argument convention (used by every command that takes a tree):
                      SPR-optimal. Composes freely with every other flag
       findopt [N]    every N steps (default: once, at the end), run one
                      whole-tree ML refit on a scratch clone of the current
-                     tree, always under GTR+FO regardless of the main
+                     tree, always under the richest available model (GTR+FO
+                     for DNA, LG+FO for protein) regardless of the main
                      search's own model -- purely diagnostic: the clone is
                      discarded after its logL is read, so the real search
                      is unaffected (pairs well with a cheap "fast quiet"
@@ -219,14 +236,31 @@ Tree argument convention (used by every command that takes a tree):
                      of replacing the trajectory's final one, and "findopt"
                      is folded into the record filename's tag. Its CPU
                      cost is excluded from the run's own timing
+      notree         no ground-truth tree: <alisim-tree.treefile> is instead
+                     a real alignment file path DIRECTLY (any file format
+                     or sequence type Alignment can auto-detect --
+                     FASTA/NEXUS/PHYLIP, DNA/protein; there is no ".fa"
+                     derivation in this mode, unlike the normal AliSim
+                     workflow). Skips the final RF-distance and true-tree-
+                     logL output entirely; output.txt still gets the final
+                     tree, just not a true tree or RF line. "record" still
+                     works, writing NaN for the "gap to true tree" column
+                     since there's no true tree to compare against. Every
+                     other flag (starting tree method, radius, selection,
+                     model, ...) works exactly the same as usual -- this is
+                     for running the search on a real alignment you don't
+                     have a known-correct tree for, not just AliSim output
 
-    On completion, prints the Robinson-Foulds (RF) distance between the
-    original AliSim tree and the final tree, and writes both trees plus
-    the RF distance to output.txt in the current directory (overwritten
-    every run). Also creates spr_hillclimb_tmp.* temp files (BioNJ's
+    On completion (unless "notree"), prints the Robinson-Foulds (RF)
+    distance between the original AliSim tree and the final tree, and
+    writes both trees plus the RF distance to output.txt in the current
+    directory (overwritten every run; with "notree", output.txt gets only
+    the final tree). Also creates spr_hillclimb_tmp.* temp files (BioNJ's
     distance matrix and tree) unless starting from "random" or
     "iqtreestart". Exit code 0 on success (even with zero improving
-    steps); 1 if the alignment couldn't be found next to the tree file.
+    steps); 1 if the alignment couldn't be found (next to the tree file,
+    unless "notree" -- then the path given is the alignment itself); 2 if
+    its sequence type isn't DNA or protein.
 
     Examples:
         build/spr_topology_test --hillclimb sim.treefile 6 10
@@ -245,6 +279,7 @@ Tree argument convention (used by every command that takes a tree):
         build/spr_topology_test --hillclimb sim.treefile 8 500 fast sweep 20
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt record
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt 100 record  (checked every 100 steps)
+        build/spr_topology_test --hillclimb real_alignment.fasta 8 200 fast quiet notree      (no ground-truth tree; real_alignment.fasta read directly, any format/DNA-or-protein)
 
 
 6) Same-random-moves branch-length comparison (NOT a search)

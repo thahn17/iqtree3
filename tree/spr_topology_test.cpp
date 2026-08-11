@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <queue>
 #include <set>
 #include <sstream>
@@ -46,6 +47,44 @@ void reportRate(ostream &out, PhyloTree &tree) {}
 const char *aa_model_names_rax[] = {"LG", "WAG", "JTT", "JTTDCMut", "DCMut", "VT", "PMB", "Blosum62", "Dayhoff",
         "mtREV", "mtART", "mtZOA", "mtMAM",
         "HIVb", "HIVw", "FLU", "rtREV", "cpREV"};
+
+/**
+    picks this tool's model name for an alignment's auto-detected sequence
+    type (see Alignment::detectSequenceType, alignment/alignment.cpp --
+    triggered by passing a null/empty sequence_type string into the
+    Alignment constructor instead of a hardcoded one, which every alignment
+    load in this file now does). Mirrors real IQ-TREE's own per-type
+    "usual" default substitution model (getUsualModelSubst,
+    main/phylotesting.cpp: "GTR" for DNA, "LG" for protein) rather than
+    running a full ModelFinder search, since this is a lightweight test
+    tool -- LG is IQ-TREE's own quick/default protein model, used the same
+    way e.g. to build a fast guide tree without a full model-testing phase.
+    `richerModel` mirrors this tool's existing "gtr" flag: false keeps the
+    long-standing fixed-parameter default for that sequence type (JC for
+    DNA, plain LG for protein); true asks for the ML-estimated-frequency
+    variant ("+FO") instead -- GTR+FO already meant this for DNA; LG has no
+    free rate-matrix parameters of its own the way GTR does, so "+FO" is
+    the closest protein equivalent of "let the model fit more than just
+    branch lengths". Only DNA and protein are supported; callers are
+    expected to have already rejected any other detected SeqType.
+ */
+string modelNameFor(SeqType seqType, bool richerModel) {
+    if (seqType == SEQ_PROTEIN)
+        return richerModel ? "LG+FO" : "LG";
+    return richerModel ? "GTR+FO" : "JC";
+}
+
+/**
+    true iff `seqType` is one this tool's model handling
+    (modelNameFor/ModelFactory setup) actually supports. Alignment content
+    can auto-detect to other SeqType values (SEQ_BINARY, SEQ_MORPH,
+    SEQ_CODON, ...) that this tool has never had any model logic for; call
+    this right after loading an alignment and bail out with a clear error
+    instead of silently mishandling one of those.
+ */
+bool isSupportedSeqType(SeqType seqType) {
+    return seqType == SEQ_DNA || seqType == SEQ_PROTEIN;
+}
 
 // defined later (near runBranchLengthCompare, which builds its own B/C/D
 // scratch trees the same way); forward-declared here, in the SAME (global)
@@ -1504,13 +1543,15 @@ void maybeRunPeriodicFullReopt(PhyloTree &tree, int step, int fullReoptEveryNSte
     setLikelihoodKernel() call, so this window can't leak into the main
     tree's own likelihood evaluations at all.
 
-    The scratch tree always fits under GTR+FO, regardless of whether the
-    main search itself is running under useGtrModel (JC) or not -- findopt
-    is meant to answer "how good could this topology's branch lengths AND
-    model get under the richest model available", not "what would this
-    step's own model reach", so it always builds its clone with modelName
-    "GTR+FO" and always refits via ModelFactory::optimizeParameters(), never
-    plain optimizeAllBranches().
+    The scratch tree always fits under the richest available model for the
+    alignment's (auto-detected) sequence type -- GTR+FO for DNA, LG+FO for
+    protein, see modelNameFor's comment -- regardless of whether the main
+    search itself is running under useGtrModel (plain JC/LG) or not:
+    findopt is meant to answer "how good could this topology's branch
+    lengths AND model get under the richest model available", not "what
+    would this step's own model reach", so it always builds its clone with
+    modelNameFor(aln->seq_type, true) and always refits via
+    ModelFactory::optimizeParameters(), never plain optimizeAllBranches().
 
     trueTreeLogl here is NOT necessarily the same value runHillClimb prints
     / records for curScore's own comparisons -- the caller passes
@@ -1559,10 +1600,12 @@ void maybeRunFindopt(PhyloTree &tree, int step, int findoptEveryNSteps, bool qui
     tree.printTree(fullPrecisionNewick, WT_BR_LEN);
     params.numeric_precision = savedPrecision;
 
-    // always GTR+FO for the scratch refit, independent of modelName (which
-    // reflects the MAIN search's own model, JC unless useGtrModel is set)
+    // always the richest available model for the scratch refit (GTR+FO for
+    // DNA, LG+FO for protein -- see modelNameFor's comment), independent of
+    // modelName (which reflects the MAIN search's own model, plain JC/LG
+    // unless useGtrModel is set)
     PhyloTree scratchTree;
-    initClonedTree(scratchTree, fullPrecisionNewick.str(), aln, params, "GTR+FO");
+    initClonedTree(scratchTree, fullPrecisionNewick.str(), aln, params, modelNameFor(aln->seq_type, true));
     clampAllBranchLengthsForOptimization(scratchTree, Params::getInstance().min_branch_length);
     double findoptScore =
         scratchTree.getModelFactory()->optimizeParameters(BRLEN_OPTIMIZE, false, Params::getInstance().modelEps);
@@ -1928,15 +1971,17 @@ int runListGrafts(const string &treeArg, const string &pruneSpec, int radius) {
 }
 
 /**
-    load a tree and a DNA alignment, and evaluate the log-likelihood of
-    that exact tree (topology and branch lengths as given) against that
-    alignment under a plain JC model with no rate heterogeneity. Does NOT
-    optimize branch lengths or model parameters -- this reports the
-    likelihood of the tree exactly as given, not the best achievable
-    likelihood for that topology. The alignment's sequence names must
-    match the tree's leaf names exactly (case-sensitive).
+    load a tree and a DNA or protein alignment (sequence type
+    auto-detected from content -- see modelNameFor's comment), and evaluate
+    the log-likelihood of that exact tree (topology and branch lengths as
+    given) against that alignment under a plain fixed-parameter model (JC
+    for DNA, LG for protein) with no rate heterogeneity. Does NOT optimize
+    branch lengths or model parameters -- this reports the likelihood of
+    the tree exactly as given, not the best achievable likelihood for that
+    topology. The alignment's sequence names must match the tree's leaf
+    names exactly (case-sensitive).
     @return 0 on success, 1 if the tree/alignment couldn't be read or
-    matched
+    matched, 2 if the alignment's sequence type isn't DNA or protein
  */
 int runLikelihood(const string &treeArg, const string &alignmentFile) {
     ifstream check(alignmentFile.c_str());
@@ -1953,7 +1998,17 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     params.setDefault();
 
     InputType intype;
-    Alignment *aln = new Alignment((char*) alignmentFile.c_str(), (char*) "DNA", intype, "");
+    // nullptr sequence_type (rather than a hardcoded "DNA") makes the
+    // Alignment constructor auto-detect DNA vs. protein vs. other types
+    // from raw character content (Alignment::detectSequenceType, called
+    // unconditionally inside buildPattern before any override is applied)
+    Alignment *aln = new Alignment((char*) alignmentFile.c_str(), nullptr, intype, "");
+    if (!isSupportedSeqType(aln->seq_type)) {
+        cerr << "error: alignment '" << alignmentFile << "' auto-detected as a sequence type this tool "
+                "doesn't support (only DNA and protein are handled)" << endl;
+        delete aln;
+        return 2;
+    }
 
     PhyloTree tree;
     tree.setParams(&params);
@@ -1972,7 +2027,7 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     // that aln is set so it picks the real SSE likelihood kernel instead
     tree.setLikelihoodKernel(LK_SSE2);
 
-    string modelName = "JC";
+    string modelName = modelNameFor(aln->seq_type, false);
     ModelsBlock *modelsBlock = readModelsDefinition(params);
     tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
     delete modelsBlock;
@@ -1984,7 +2039,8 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
 
     cout << "tree          : " << newickOf(tree) << endl;
     cout << "alignment     : " << alignmentFile << " (" << aln->getNSeq() << " sequences, "
-         << aln->getNSite() << " sites)" << endl;
+         << aln->getNSite() << " sites, " << (aln->seq_type == SEQ_PROTEIN ? "protein" : "DNA")
+         << ", auto-detected)" << endl;
     cout << "model         : " << modelName << " (fixed, no branch length or parameter optimization)" << endl;
     cout << "log-likelihood: " << logl << endl;
 
@@ -2131,6 +2187,14 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     pair); the alignment file is derived automatically from trueTreeArg by
     AliSim's own default naming convention (<prefix>.treefile paired with
     <prefix>.fa).
+
+    If noTrueTree is set, there's no ground-truth tree at all: trueTreeArg
+    is instead a real alignment file path directly (any file/sequence type
+    Alignment can auto-detect -- FASTA/NEXUS/PHYLIP, DNA/protein), and the
+    final RF-distance-to-true-tree and true-tree-logL reference output are
+    both skipped entirely (see every noTrueTree-guarded block further down
+    this function). Everything else -- starting tree method, radius,
+    selection, model, all other flags -- works exactly the same either way.
 
     Builds a BioNJ tree from that alignment as the starting "estimate" tree
     (or, if randomStart is true, a random Yule-Harding topology over the
@@ -2514,42 +2578,88 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         bool investigateFlag = false, int investigateRadius = 1, bool alternateFlag = false,
         bool shrinkFlag = false, int shrinkStallThreshold = 10, bool sweepFlag = false, int sweepCount = 10,
         bool findoptFlag = false, int findoptEveryNSteps = 0,
-        bool iqtreeStart = false, int iqtreeStartPoolSize = 20) {
+        bool iqtreeStart = false, int iqtreeStartPoolSize = 20, bool noTrueTree = false) {
     double cpuClockStart = getCPUTime();
     if (findoptFlag && findoptEveryNSteps <= 0)
         findoptEveryNSteps = maxSteps; // "default = total number of steps"
 
-    // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa
+    // AliSim's own default output naming: <prefix>.treefile + <prefix>.fa --
+    // UNLESS noTrueTree, in which case there is no ground-truth tree at
+    // all and trueTreeArg IS the alignment path directly (any real
+    // alignment, not just an AliSim-simulated one; sequence type and file
+    // format are both auto-detected below, same as every other command in
+    // this file -- see modelNameFor's comment for sequence type, and
+    // Alignment's own InputType detection for file format, e.g. NEXUS vs.
+    // FASTA vs. PHYLIP).
     string alnFile = trueTreeArg;
-    const string suffix = ".treefile";
-    if (alnFile.size() > suffix.size()
-            && alnFile.compare(alnFile.size() - suffix.size(), suffix.size(), suffix) == 0)
-        alnFile = alnFile.substr(0, alnFile.size() - suffix.size()) + ".fa";
-    else
-        alnFile += ".fa";
+    if (!noTrueTree) {
+        const string suffix = ".treefile";
+        if (alnFile.size() > suffix.size()
+                && alnFile.compare(alnFile.size() - suffix.size(), suffix.size(), suffix) == 0)
+            alnFile = alnFile.substr(0, alnFile.size() - suffix.size()) + ".fa";
+        else
+            alnFile += ".fa";
+    }
 
     ifstream alnCheck(alnFile.c_str());
     if (!alnCheck.good()) {
         cerr << "error: could not find alignment '" << alnFile << "'" << endl;
-        cerr << "  (derived from the tree argument by replacing '.treefile' with '.fa',"
-                " AliSim's own default output naming; generate a pair with e.g." << endl;
-        cerr << "   iqtree3 --alisim <prefix> -m \"GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}\""
-                " -t \"RANDOM{yh/100}\" --length 10000)" << endl;
+        if (!noTrueTree)
+            cerr << "  (derived from the tree argument by replacing '.treefile' with '.fa',"
+                    " AliSim's own default output naming; generate a pair with e.g." << endl
+                 << "   iqtree3 --alisim <prefix> -m \"GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}\""
+                    " -t \"RANDOM{yh/100}\" --length 10000)" << endl;
         return 2;
     }
     alnCheck.close();
 
-    // GTR+FO (ML-estimated rates and frequencies) instead of a plain JC
-    // model: sim.fa was simulated under GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3}
-    // (see the AliSim command in this tool's usage doc), so searching under
-    // JC -- which has no free rate/frequency parameters to fit at all --
-    // is a deliberately misspecified model, not just a simplification. See
-    // useGtrModel's comment on runHillClimb for why this matters
-    // specifically for whether periodic re-optimization is worth its cost.
-    // Computed here, before any of the (possibly slow) setup below, since
-    // it's needed for this run's own printed settings summary and
-    // iqtreeStart's own preprocessing alike.
-    string modelName = useGtrModel ? "GTR+FO" : "JC";
+    // Params is a process-wide singleton read by Alignment/ModelFactory/
+    // PhyloTree internals; nothing else in this executable touches it, so
+    // it's safe to just reset it to library defaults here, before loading
+    // the alignment below (moved up from further down in this function,
+    // since the alignment now needs to be loaded before the settings
+    // summary prints, to report its auto-detected sequence type).
+    Params &params = Params::getInstance();
+    params.setDefault();
+    // computeBioNJ writes/reads temporary files alongside this prefix
+    // (<prefix>.mldist, <prefix>.bionj) as part of how it builds the tree
+    params.out_prefix = (char*) "spr_hillclimb_tmp";
+
+    // Load the alignment now (before the settings summary below), with its
+    // own narrow cout suppression, so the summary can report the
+    // auto-detected sequence type and this run's actual model name.
+    // Loading itself is fast even for large alignments -- the slow part
+    // this tool avoids blocking the terminal on before printing anything
+    // is BioNJ/iqtreeStart preprocessing further below, not this read.
+    // nullptr sequence_type (rather than a hardcoded "DNA") makes the
+    // Alignment constructor auto-detect DNA vs. protein vs. other types
+    // from raw character content (Alignment::detectSequenceType, called
+    // unconditionally inside buildPattern before any override is applied).
+    InputType intype;
+    Alignment *aln;
+    {
+        ostringstream suppressedAlignmentLoad;
+        streambuf *realCoutBufAln = cout.rdbuf(suppressedAlignmentLoad.rdbuf());
+        aln = new Alignment((char*) alnFile.c_str(), nullptr, intype, "");
+        cout.rdbuf(realCoutBufAln);
+    }
+    if (!isSupportedSeqType(aln->seq_type)) {
+        cerr << "error: alignment '" << alnFile << "' auto-detected as a sequence type this tool "
+                "doesn't support (only DNA and protein are handled)" << endl;
+        delete aln;
+        return 2;
+    }
+
+    // GTR+FO (ML-estimated rates and frequencies) for DNA, or LG/LG+FO for
+    // protein (see modelNameFor's comment) instead of a plain fixed model:
+    // sim.fa was simulated under GTR{2,4,1,1,4,2}+F{0.3,0.2,0.2,0.3} (see
+    // the AliSim command in this tool's usage doc), so searching a DNA
+    // alignment under plain JC -- which has no free rate/frequency
+    // parameters to fit at all -- is a deliberately misspecified model, not
+    // just a simplification. See useGtrModel's comment on runHillClimb for
+    // why this matters specifically for whether periodic re-optimization
+    // is worth its cost.
+    string modelName = modelNameFor(aln->seq_type, useGtrModel);
     string recordTag = buildRecordTag(useFastSelection, reoptimizeBranchLengths, fullReoptEveryNSteps,
             investigateFlag, investigateRadius, alternateFlag, shrinkFlag, sweepFlag, sweepCount,
             findoptEveryNSteps);
@@ -2561,6 +2671,10 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // finished, which looks indistinguishable from a hang on a slow run.
     // Only the "start tree" line itself (needs the actual tree/curScore)
     // and its own timing still have to wait until after that setup below.
+    cout << "sequence type   : " << (aln->seq_type == SEQ_PROTEIN ? "protein" : "DNA")
+         << " (auto-detected)" << endl;
+    if (noTrueTree)
+        cout << "true tree       : none -- no RF distance or true-tree logL reference this run" << endl;
     cout << "radius          : " << radius << endl;
     cout << "max steps       : " << maxSteps << endl;
     if (iqtreeStart)
@@ -2579,7 +2693,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
              << (fullReoptInitialFit ? ", plus one up front on the starting tree" : "")
              << ", experimental" << endl;
     if (useGtrModel)
-        cout << "model           : GTR+FO (ML-estimated rates/frequencies), experimental" << endl;
+        cout << "model           : " << modelName << " (ML-estimated rates/frequencies), experimental" << endl;
     if (recordProgress)
         cout << "record          : appending to " << recordSpreadsheetPath(modelName, recordTag)
              << ", experimental" << endl;
@@ -2598,20 +2712,20 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                 "experimental" << endl;
     if (findoptEveryNSteps > 0)
         cout << "findopt         : every " << findoptEveryNSteps << " step(s), scratch whole-tree "
-                "optimizeParameters() (GTR+FO model + branch lengths, always, regardless of 'gtr') "
-                "refit on a rolled-back copy (main tree unaffected), experimental" << endl;
+                "optimizeParameters() (richest available model + branch lengths, always, regardless of "
+                "'gtr') refit on a rolled-back copy (main tree unaffected), experimental" << endl;
 
     // the original AliSim tree, kept as a separate plain tree purely for
-    // the final RF-distance comparison -- never touched by any SPR move
+    // the final RF-distance comparison -- never touched by any SPR move.
+    // Left default-constructed/empty when noTrueTree (trueTreeArg is an
+    // alignment path in that case, not a tree to read) -- every use of it
+    // and trueTreeNewick further down is itself guarded by !noTrueTree.
     PhyloTree trueTree;
-    readTreeArg(trueTree, trueTreeArg);
-    string trueTreeNewick = newickOf(trueTree);
-
-    Params &params = Params::getInstance();
-    params.setDefault();
-    // computeBioNJ writes/reads temporary files alongside this prefix
-    // (<prefix>.mldist, <prefix>.bionj) as part of how it builds the tree
-    params.out_prefix = (char*) "spr_hillclimb_tmp";
+    string trueTreeNewick;
+    if (!noTrueTree) {
+        readTreeArg(trueTree, trueTreeArg);
+        trueTreeNewick = newickOf(trueTree);
+    }
 
     // seeded here, before any random tree generation, so that both a
     // randomStart topology and every step's random prune-edge choice come
@@ -2621,20 +2735,19 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // back), so getRealTime()'s sub-second precision is mixed in too
     init_random((int) (time(nullptr) * 1000 + (long) (getRealTime() * 1000) % 1000));
 
-    // the alignment/distance/BioNJ/model setup below goes through several
-    // library code paths (Alignment, computeDist, computeBioNJ, ModelFactory)
-    // that print their own progress noise (format detection, composition
-    // test, distance matrix, RapidNJ progress, ...) unconditionally on cout;
-    // none of it is useful for this test tool, so silence cout for the
-    // duration of the setup and restore it before printing our own summary
+    // the distance/BioNJ/model setup below goes through several library
+    // code paths (computeDist, computeBioNJ, ModelFactory) that print
+    // their own progress noise (composition test, distance matrix,
+    // RapidNJ progress, ...) unconditionally on cout; none of it is
+    // useful for this test tool, so silence cout for the duration of the
+    // setup and restore it before printing our own summary. (The
+    // alignment itself was already loaded, with its own narrow
+    // suppression, further up -- before the settings summary.)
     ostringstream suppressedSetupOutput;
     streambuf *realCoutBuf = cout.rdbuf(suppressedSetupOutput.rdbuf());
 
-    InputType intype;
-    Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
-
-    // modelName was already computed above, before this run's settings
-    // summary was printed
+    // modelName and aln were already computed/loaded above, before this
+    // run's settings summary was printed
     PhyloTree tree(aln);
     tree.setParams(&params);
     if (randomStart) {
@@ -2755,46 +2868,56 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // as simulated) against this same alignment/model, purely as a
     // reference point for how the final hill-climbed tree's logL compares --
     // trueTree gets its own ModelFactory since a PhyloTree's model holds a
-    // pointer back to that exact tree, so it can't be shared with `tree`
-    trueTree.setParams(&params);
-    trueTree.setAlignment(aln);
-    trueTree.setNumThreads(1);
-    trueTree.setLikelihoodKernel(LK_SSE2);
-    ModelsBlock *trueTreeModelsBlock = readModelsDefinition(params);
-    trueTree.setModelFactory(new ModelFactory(params, modelName, &trueTree, trueTreeModelsBlock));
-    delete trueTreeModelsBlock;
-    trueTree.setModel(trueTree.getModelFactory()->model);
-    trueTree.setRate(trueTree.getModelFactory()->site_rate);
-    trueTree.initializeAllPartialLh();
-    double trueTreeLogl;
-    if (useGtrModel)
-        // fit GTR+FO's rate/frequency parameters (only) against the TRUE
-        // simulated topology and branch lengths (BRLEN_FIX -- those lengths
-        // are exactly as AliSim generated them, not to be touched), so this
-        // reference logL reflects a properly-fit model rather than
-        // GTR+FO's arbitrary un-optimized starting parameters
-        trueTreeLogl = trueTree.getModelFactory()->optimizeParameters(BRLEN_FIX, false, params.modelEps);
-    else
-        trueTreeLogl = trueTree.computeLikelihood();
+    // pointer back to that exact tree, so it can't be shared with `tree`.
+    // Skipped entirely when noTrueTree: there's no ground-truth topology to
+    // fit a model against, so trueTreeLogl stays NaN (self-documenting --
+    // every print/record site that uses it just shows/writes NaN, rather
+    // than this needing its own separate on/off plumbing at each of them).
+    double trueTreeLogl = std::numeric_limits<double>::quiet_NaN();
+    if (!noTrueTree) {
+        trueTree.setParams(&params);
+        trueTree.setAlignment(aln);
+        trueTree.setNumThreads(1);
+        trueTree.setLikelihoodKernel(LK_SSE2);
+        ModelsBlock *trueTreeModelsBlock = readModelsDefinition(params);
+        trueTree.setModelFactory(new ModelFactory(params, modelName, &trueTree, trueTreeModelsBlock));
+        delete trueTreeModelsBlock;
+        trueTree.setModel(trueTree.getModelFactory()->model);
+        trueTree.setRate(trueTree.getModelFactory()->site_rate);
+        trueTree.initializeAllPartialLh();
+        if (useGtrModel)
+            // fit GTR+FO's rate/frequency parameters (only) against the TRUE
+            // simulated topology and branch lengths (BRLEN_FIX -- those lengths
+            // are exactly as AliSim generated them, not to be touched), so this
+            // reference logL reflects a properly-fit model rather than
+            // GTR+FO's arbitrary un-optimized starting parameters
+            trueTreeLogl = trueTree.getModelFactory()->optimizeParameters(BRLEN_FIX, false, params.modelEps);
+        else
+            trueTreeLogl = trueTree.computeLikelihood();
+    }
 
     // findopt's own scratch refit (see maybeRunFindopt's comment) always
-    // fits under GTR+FO, regardless of the main run's own model -- so
-    // comparing its reading against the plain trueTreeLogl above would be
-    // unfair whenever the main run ISN'T already under GTR+FO
-    // (useGtrModel == false, trueTreeLogl there being an unfit JC
-    // likelihood with no free parameters to begin with): any gap would
-    // then be partly genuine search progress and partly just a free lunch
-    // from a strictly richer model. Build a second, GTR+FO-under-BRLEN_FIX
-    // reference off a scratch clone of the SAME true topology and branch
-    // lengths (same clone-from-full-precision-Newick approach
-    // maybeRunFindopt uses for the main tree, so trueTree's own state --
-    // still needed below for computeRFDist -- is never touched), purely so
-    // findopt's own comparisons stay apples-to-apples. Skipped entirely
-    // when findopt isn't even in use (findoptEveryNSteps == 0), since it'd
-    // otherwise be wasted work; trueTreeLogl itself is reused as-is when
-    // useGtrModel already made it a GTR+FO fit in the first place.
+    // fits under the richest available model (GTR+FO for DNA, LG+FO for
+    // protein), regardless of the main run's own model -- so comparing its
+    // reading against the plain trueTreeLogl above would be unfair whenever
+    // the main run ISN'T already under that richer model (useGtrModel ==
+    // false, trueTreeLogl there being an unfit JC/LG likelihood with no
+    // free parameters to begin with): any gap would then be partly genuine
+    // search progress and partly just a free lunch from a strictly richer
+    // model. Build a second, richer-model-under-BRLEN_FIX reference off a
+    // scratch clone of the SAME true topology and branch lengths (same
+    // clone-from-full-precision-Newick approach maybeRunFindopt uses for
+    // the main tree, so trueTree's own state -- still needed below for
+    // computeRFDist -- is never touched), purely so findopt's own
+    // comparisons stay apples-to-apples. Skipped entirely when findopt
+    // isn't even in use (findoptEveryNSteps == 0), when noTrueTree (no
+    // trueTree to clone from -- findopt's own diagnostic refit still runs,
+    // it just has no "gap to true tree" reference to report, same as
+    // trueTreeLogl itself), since it'd otherwise be wasted work;
+    // trueTreeLogl itself is reused as-is when useGtrModel already made it
+    // a richer-model fit in the first place.
     double trueTreeLoglForFindopt = trueTreeLogl;
-    if (findoptEveryNSteps > 0 && !useGtrModel) {
+    if (!noTrueTree && findoptEveryNSteps > 0 && !useGtrModel) {
         int savedPrecisionTrueTree = params.numeric_precision;
         params.numeric_precision = 15;
         ostringstream trueTreeFullPrecisionNewick;
@@ -2802,7 +2925,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         params.numeric_precision = savedPrecisionTrueTree;
 
         PhyloTree trueTreeGtrScratch;
-        initClonedTree(trueTreeGtrScratch, trueTreeFullPrecisionNewick.str(), aln, params, "GTR+FO");
+        initClonedTree(trueTreeGtrScratch, trueTreeFullPrecisionNewick.str(), aln, params,
+                modelNameFor(aln->seq_type, true));
         trueTreeLoglForFindopt =
             trueTreeGtrScratch.getModelFactory()->optimizeParameters(BRLEN_FIX, false, params.modelEps);
     }
@@ -3225,22 +3349,32 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     cout << "=== finished after " << step << " step(s) ===" << endl;
     string finalTreeNewick = newickOf(tree);
     cout << "final tree (logL = " << curScore << "): " << finalTreeNewick << endl;
-    cout << "AliSim true tree logL: " << trueTreeLogl << endl;
 
-    stringstream finalTreeStream;
-    finalTreeStream << finalTreeNewick;
-    finalTreeStream.seekg(0, ios::beg);
-    vector<double> rfdist;
-    trueTree.computeRFDist(finalTreeStream, rfdist);
-    int rf = rfdist.empty() ? -1 : (int) rfdist[0];
+    // RF distance and the true-tree logL reference both need an actual
+    // ground-truth tree, which doesn't exist when noTrueTree; rf stays -1
+    // (already this function's own "no distance computed" sentinel, same
+    // value used further down if rfdist ever comes back empty)
+    int rf = -1;
+    if (!noTrueTree) {
+        cout << "AliSim true tree logL: " << trueTreeLogl << endl;
 
-    cout << "RF distance to the original AliSim tree: " << rf << endl;
+        stringstream finalTreeStream;
+        finalTreeStream << finalTreeNewick;
+        finalTreeStream.seekg(0, ios::beg);
+        vector<double> rfdist;
+        trueTree.computeRFDist(finalTreeStream, rfdist);
+        rf = rfdist.empty() ? -1 : (int) rfdist[0];
+
+        cout << "RF distance to the original AliSim tree: " << rf << endl;
+    }
 
     ofstream out("output.txt");
     if (out.good()) {
-        out << "AliSim true tree : " << trueTreeNewick << endl;
+        if (!noTrueTree) {
+            out << "AliSim true tree : " << trueTreeNewick << endl;
+            out << "RF distance      : " << rf << endl;
+        }
         out << "Final result tree: " << finalTreeNewick << endl;
-        out << "RF distance      : " << rf << endl;
         out.close();
         cout << "Results written to output.txt" << endl;
     } else {
@@ -3292,11 +3426,12 @@ void initClonedTree(PhyloTree &t, const string &newickStr, Alignment *aln, Param
       - D does the same as C, but up to 10 full sweeps
         (optimizeAllBranches(10)) instead of 1.
     All four are otherwise identical: same starting topology and branch
-    lengths (see below), same alignment, same JC model, and -- critically
-    -- the same move at every step (same prune edge, same regraft
-    target), so any divergence between their logL trajectories can only
-    come from how branch lengths were set, never from the four trees
-    taking different topological paths.
+    lengths (see below), same alignment, same fixed-parameter model (JC for
+    DNA, LG for protein -- sequence type auto-detected, see modelNameFor's
+    comment), and -- critically -- the same move at every step (same prune
+    edge, same regraft target), so any divergence between their logL
+    trajectories can only come from how branch lengths were set, never
+    from the four trees taking different topological paths.
 
     This is deliberately NOT a search: every chosen candidate is
     applied unconditionally, every step, on ALL FOUR trees, regardless of
@@ -3415,9 +3550,18 @@ int runBranchLengthCompare(const string &trueTreeArg, int radius, int maxSteps) 
     streambuf *realCoutBuf = cout.rdbuf(suppressedSetupOutput.rdbuf());
 
     InputType intype;
-    Alignment *aln = new Alignment((char*) alnFile.c_str(), (char*) "DNA", intype, "");
+    // nullptr sequence_type auto-detects DNA vs. protein from content, same
+    // as runLikelihood/runHillClimb (see modelNameFor's comment)
+    Alignment *aln = new Alignment((char*) alnFile.c_str(), nullptr, intype, "");
+    if (!isSupportedSeqType(aln->seq_type)) {
+        cout.rdbuf(realCoutBuf);
+        cerr << "error: alignment '" << alnFile << "' auto-detected as a sequence type this tool "
+                "doesn't support (only DNA and protein are handled)" << endl;
+        delete aln;
+        return 2;
+    }
 
-    string modelName = "JC";
+    string modelName = modelNameFor(aln->seq_type, false);
     // real Newton-Raphson branch-length search runs on every tree here
     // (A's own one-time starting optimization, B's every-step
     // reoptimizeSPREdges, C/D's every-step optimizeAllBranches) -- see
@@ -3792,11 +3936,12 @@ void printUsage(const char *prog) {
     cerr << endl;
     cerr << "  " << prog << " --likelihood <tree.nwk | \"(newick,string);\"> <alignment.fasta>" << endl;
     cerr << "      evaluate the log-likelihood of the given tree (topology and branch" << endl;
-    cerr << "      lengths as given, no optimization) against a DNA alignment under a" << endl;
-    cerr << "      plain JC model. Sequence names in the alignment must match the tree's" << endl;
+    cerr << "      lengths as given, no optimization) against a DNA or protein alignment" << endl;
+    cerr << "      (sequence type auto-detected) under a plain fixed model (JC for DNA, LG" << endl;
+    cerr << "      for protein). Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -3804,7 +3949,8 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt. Thirteen optional trailing flags, in any order:" << endl;
+    cerr << "      output.txt (skipped with 'notree', see below). Fourteen optional trailing" << endl;
+    cerr << "      flags, in any order:" << endl;
     cerr << "        random     start from a random Yule-Harding topology instead of the" << endl;
     cerr << "                   default BioNJ estimate tree" << endl;
     cerr << "        iqtreestart [N]  start from buildIQTreeStyleStartTree's own result instead:" << endl;
@@ -3874,9 +4020,11 @@ void printUsage(const char *prog) {
     cerr << "                   until the first periodic checkpoint. See fullReoptInitialFit's" << endl;
     cerr << "                   comment in the source" << endl;
     cerr << "        gtr        search under GTR+FO (ML-estimated rates/frequencies) instead of" << endl;
-    cerr << "                   JC -- relevant since sim.fa is simulated under a real GTR+F" << endl;
-    cerr << "                   model, so JC is a genuine misspecification, not just a" << endl;
-    cerr << "                   simplification. Combined with 'fullreopt M N', periodic sweeps" << endl;
+    cerr << "                   JC for a DNA alignment, or LG+FO instead of plain LG for a" << endl;
+    cerr << "                   protein one (sequence type auto-detected) -- relevant since" << endl;
+    cerr << "                   sim.fa is simulated under a real GTR+F model, so JC is a genuine" << endl;
+    cerr << "                   misspecification for the DNA case, not just a simplification." << endl;
+    cerr << "                   Combined with 'fullreopt M N', periodic sweeps" << endl;
     cerr << "                   also re-fit the model's own rate/frequency parameters via" << endl;
     cerr << "                   ModelFactory::optimizeParameters(), not just branch lengths." << endl;
     cerr << "                   EXPERIMENTAL, and showed the same result as plain 'fullreopt M N':" << endl;
@@ -3962,7 +4110,8 @@ void printUsage(const char *prog) {
     cerr << "                   in the source" << endl;
     cerr << "        findopt [N]  every N steps (default: the total number of steps, i.e. once,"  << endl;
     cerr << "                   effectively at the end), run ONE whole-tree ML refit on a scratch" << endl;
-    cerr << "                   clone of the current tree, ALWAYS under GTR+FO regardless of whether" << endl;
+    cerr << "                   clone of the current tree, ALWAYS under the richest available model" << endl;
+    cerr << "                   (GTR+FO for DNA, LG+FO for protein) regardless of whether" << endl;
     cerr << "                   the main search itself is using 'gtr' or not (ModelFactory::" << endl;
     cerr << "                   optimizeParameters, jointly refitting branch lengths and the model's" << endl;
     cerr << "                   rate/frequency parameters together) -- PURELY as a diagnostic: the" << endl;
@@ -3980,6 +4129,14 @@ void printUsage(const char *prog) {
     cerr << "                   is excluded from the run's own timing entirely ('pausing the timer'" << endl;
     cerr << "                   around it, both for its own CSV row and every later one)." << endl;
     cerr << "                   EXPERIMENTAL -- see maybeRunFindopt's comment in the source" << endl;
+    cerr << "        notree     no ground-truth tree: <alisim-tree.treefile> is instead a real" << endl;
+    cerr << "                   alignment file path directly (any format/sequence type Alignment" << endl;
+    cerr << "                   can auto-detect -- FASTA/NEXUS/PHYLIP, DNA/protein; no '.fa'" << endl;
+    cerr << "                   derivation happens). Skips the final RF-distance and true-tree-" << endl;
+    cerr << "                   logL output entirely (output.txt still gets the final tree, just" << endl;
+    cerr << "                   not the true tree or RF line); 'record' still works, writing NaN" << endl;
+    cerr << "                   for the 'gap to true tree' column since there's no true tree to" << endl;
+    cerr << "                   compare against. Every other flag works the same as usual" << endl;
     cerr << endl;
     cerr << "  " << prog << " --branchlength-compare <alisim-tree.treefile> <radius> <max-steps>" << endl;
     cerr << "      NOT a search: applies the SAME sequence of random SPR moves to FOUR" << endl;
@@ -4154,13 +4311,15 @@ void printUsage(const char *prog) {
 
     "findopt" (replacing the old, single-shot, curScore-mutating
     "finalreopt") runs a non-destructive, whole-tree ML refit every N steps
-    on a throwaway scratch clone of the current tree, ALWAYS under GTR+FO
-    regardless of whether the main search itself is using "gtr" or not
-    (ModelFactory::optimizeParameters, jointly refitting branch lengths and
-    the model's rate/frequency parameters together) -- the scratch clone is
-    discarded once its logL is read off, so it never actually touches the
-    main tree, its model, or curScore, only reports what a full GTR+FO
-    refit would find. May optionally be immediately followed by a positive
+    on a throwaway scratch clone of the current tree, ALWAYS under the
+    richest available model for the alignment's (auto-detected) sequence
+    type -- GTR+FO for DNA, LG+FO for protein -- regardless of whether the
+    main search itself is using "gtr" or not (ModelFactory::
+    optimizeParameters, jointly refitting branch lengths and the model's
+    rate/frequency parameters together) -- the scratch clone is discarded
+    once its logL is read off, so it never actually touches the main tree,
+    its model, or curScore, only reports what that full refit would find.
+    May optionally be immediately followed by a positive
     integer, e.g.
     "findopt 50" -- same parsing special case as "fast N"/"shrink N": N
     omitted defaults to the TOTAL number of steps (maxSteps) -- resolved in
@@ -4168,6 +4327,15 @@ void printUsage(const char *prog) {
     makes bare "findopt" check exactly once, effectively at the end,
     mirroring "finalreopt"'s old one-shot behavior. See findoptFlag's and
     maybeRunFindopt's comments on/near runHillClimb.
+
+    "notree" means there's no ground-truth tree at all -- the first
+    positional argument is a real alignment file directly (any format
+    Alignment can auto-detect: FASTA, NEXUS, PHYLIP, ...), not an
+    AliSim .treefile with a same-prefix .fa alignment derived from it.
+    Disables the final RF-distance-to-true-tree and true-tree-logL
+    reference output entirely (see noTrueTree's uses on runHillClimb) --
+    everything else about the search (starting tree method, radius,
+    selection, model, etc.) is unaffected.
     @return false if any trailing argument isn't recognized
  */
 bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
@@ -4175,7 +4343,8 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
         int &fullReoptEveryNSteps, int &fullReoptRounds, bool &fullReoptInitialFit, bool &useGtrModel,
         bool &recordProgress, bool &investigateFlag, int &investigateRadius,
         bool &alternateFlag, bool &shrinkFlag, int &shrinkStallThreshold, bool &sweepFlag, int &sweepCount,
-        bool &findoptFlag, int &findoptEveryNSteps, bool &iqtreeStart, int &iqtreeStartPoolSize) {
+        bool &findoptFlag, int &findoptEveryNSteps, bool &iqtreeStart, int &iqtreeStartPoolSize,
+        bool &noTrueTree) {
     randomStart = false;
     iqtreeStart = false;
     iqtreeStartPoolSize = 20;
@@ -4197,6 +4366,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     sweepCount = 10;
     findoptFlag = false;
     findoptEveryNSteps = 0;
+    noTrueTree = false;
     for (int i = fromIndex; i < argc; i++) {
         string arg = argv[i];
         if (arg == "random" && !randomStart)
@@ -4295,7 +4465,9 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
                     i++; // consume the numeric argument too
                 }
             }
-        } else
+        } else if (arg == "notree" && !noTrueTree)
+            noTrueTree = true;
+        else
             return false;
     }
     // random and iqtreestart are alternative STARTING-tree methods -- both
@@ -4319,19 +4491,20 @@ int main(int argc, char **argv) {
     if (argc >= 5 && string(argv[1]) == "--hillclimb") {
         bool randomStart, useFastSelection, quiet, reoptimizeBranchLengths, fullReoptInitialFit, useGtrModel;
         bool recordProgress, investigateFlag, alternateFlag, shrinkFlag, sweepFlag, findoptFlag, iqtreeStart;
+        bool noTrueTree;
         int numCandidates, fullReoptEveryNSteps, fullReoptRounds, investigateRadius;
         int shrinkStallThreshold, sweepCount, findoptEveryNSteps, iqtreeStartPoolSize;
         if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet, numCandidates,
                 reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds, fullReoptInitialFit, useGtrModel,
                 recordProgress, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
                 shrinkStallThreshold, sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                iqtreeStart, iqtreeStartPoolSize)) {
+                iqtreeStart, iqtreeStartPoolSize, noTrueTree)) {
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), randomStart, useFastSelection, quiet,
                     numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds,
                     fullReoptInitialFit, useGtrModel, recordProgress, investigateFlag,
                     investigateRadius, alternateFlag,
                     shrinkFlag, shrinkStallThreshold, sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                    iqtreeStart, iqtreeStartPoolSize);
+                    iqtreeStart, iqtreeStartPoolSize, noTrueTree);
         }
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")
