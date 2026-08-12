@@ -941,6 +941,229 @@ bool chooseGraft(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int
 }
 
 /**
+    <radius>'s meaning for chooseGraftByDistance below: a PERCENTAGE of the
+    tree's own total branch length (MTree::treeLength(), summed over every
+    edge), not an edge count and not an absolute distance. budget =
+    (radiusPercent / 100.0) * tree.treeLength(). This is what makes it
+    "normalized": the same <radius> value (say, 10) means "wander up to
+    10% of the tree's own total branch length away from the prune point"
+    regardless of whether this tree's branch lengths are tiny
+    substitutions-per-site values or something on a completely different
+    scale -- unlike a fixed absolute-length radius, which would need a
+    different value per dataset to mean anything comparable.
+ */
+double distanceRadiusBudget(PhyloTree &tree, int radiusPercent) {
+    return (radiusPercent / 100.0) * tree.treeLength();
+}
+
+/**
+    alternative to chooseGraft() -- draws a single random SPR regraft
+    target the same way (a directed random walk from the collapsed view
+    above (pruneNode,pruneDad), never a full enumeration), but governed by
+    actual summed BRANCH LENGTH along the walk instead of a fixed hop
+    count. Selected via the "distradius" flag (see parseHillClimbFlags);
+    everything about legality/candidate-tier priority is identical to
+    chooseGraft (same collapsePruneDad/virtuallyAdjacent collapsed view,
+    same tier1 forward / tier2 sideways / tier3 backward priority order,
+    same root-leaf and pruneNode exclusions, same final isLegalSPR
+    ASSERT) -- only the STOPPING rule differs.
+
+    Budget and the up-front deduction for "the branch(es) above the start
+    branch": before the walk takes a single step, `remaining` is seeded to
+    distanceRadiusBudget(tree, radiusPercent) minus the combined length of
+    pruneDad's own two other edges (to sibling1 and sibling2) -- these sit
+    directly above the pruned edge and, in the collapsed view this walk
+    operates on, are already a single edge of exactly that summed length
+    (see collapsePruneDad); step 1 immediately jumps past them to whichever
+    real edge it draws, so that distance is spent up front rather than
+    charged per-direction.
+
+    Each subsequent hop updates `remaining` by whatever its own tier
+    implies, mirroring what real outward distance from the prune point
+    that hop actually represents:
+      - tier 1 (forward, extends past `node`): pure spend -- charges the
+        new edge's own length (or, for a hop that resolves through
+        collapsePruneDad, that edge's length PLUS the real edge beyond
+        pruneDad it silently continues through -- see the loop body).
+      - tier 2 (sideways, pivots at `dad` onto its other branch): the edge
+        being abandoned (dad's previous `node`) was never actually
+        continued past, so its length is REFUNDED back into `remaining`
+        before the new edge's length is charged -- net effect, `remaining`
+        only ever reflects the length of edges genuinely still part of the
+        current path.
+      - tier 3 (backward, undoes the last hop): the edge being left is
+        refunded the same way, but the edge walked BACK onto was already
+        paid for earlier in the path (at step 1, via the up-front
+        deduction above, if backing all the way up to the very first
+        collapsed edge; otherwise at whatever earlier tier-1 hop first
+        reached `dad`) -- so nothing new is charged, `remaining` just goes
+        back to what it was before that earlier charge.
+    This is the "sideways/backward steps re-add that edge's distance"
+    behavior: those two tiers don't represent real progress away from the
+    prune point, so they don't get to spend budget as if they did.
+
+    Stopping: the walk stops the moment `remaining` first drops to zero or
+    below AND the edge it is currently on is a real, already-existing edge
+    -- i.e. it stops ON the edge that exhausts the budget, not the one
+    before it (no "would exceed the budget, so don't take this hop"
+    lookahead; whichever edge crosses zero remaining IS the answer). The
+    "AND real edge" qualifier matters because a hop that resolves through
+    collapsePruneDad lands on an edge that doesn't exist yet (pruneDad
+    hasn't actually been suppressed at the time this runs) -- isLegalSPR
+    would reject stopping there, so if the budget runs out exactly on such
+    a hop, the walk is forced to keep going (ignoring the exhausted budget
+    just this once) until it reaches real ground again.
+
+    Because tier2/tier3 refund distance rather than spend it, nothing here
+    guarantees `remaining` decreases monotonically the way the hop-count
+    version's step counter does -- on a tree with many very-short/
+    zero-length branches near the prune point, a long enough run of
+    sideways/backward moves could in principle keep refunding as fast as
+    it spends, never actually exhausting the budget. maxHops below is a
+    hard cap against exactly that: sized off the tree's own edge count
+    (generous, practically unreachable on an ordinary walk) rather than
+    guessed as a fixed constant, purely so this function is guaranteed to
+    terminate regardless of how pathological the branch lengths are. If
+    it's ever hit while still sitting on a not-yet-real edge, the walk
+    falls back to the most recent REAL edge it was on (always available:
+    step 1's own candidate is always real -- see below) rather than
+    return something illegal.
+
+    outHops, if non-null, receives the number of hops actually taken (like
+    chooseGraft's outDistance, purely for logging -- this is a count of
+    walk steps, not a distance).
+
+    @return false if there is no edge to graft onto at all (same
+    3-leaf-tree case chooseGraft documents).
+ */
+bool chooseGraftByDistance(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int radiusPercent,
+        PhyloNode* &outNode, PhyloNode* &outDad, int *outHops = nullptr) {
+    PhyloNode *root = (PhyloNode*) tree.root;
+
+    vector<pair<PhyloNode*, PhyloNode*> > firstStep; // (dad=near, node=far)
+    PhyloNode *sibling1 = nullptr, *sibling2 = nullptr;
+    double siblingEdgeLength = 0.0;
+    FOR_NEIGHBOR_IT(pruneDad, pruneNode, it) {
+        PhyloNode *sibling = (PhyloNode*) (*it)->node;
+        siblingEdgeLength += (*it)->length;
+        if (!sibling1) sibling1 = sibling; else sibling2 = sibling;
+        FOR_NEIGHBOR_IT(sibling, pruneDad, it2)
+            if ((*it2)->node != root)
+                firstStep.push_back(make_pair(sibling, (PhyloNode*) (*it2)->node));
+    }
+    if (firstStep.empty())
+        return false;
+
+    double remaining = distanceRadiusBudget(tree, radiusPercent) - siblingEdgeLength;
+
+    pair<PhyloNode*, PhyloNode*> chosen = firstStep[random_int((int) firstStep.size())];
+    PhyloNode *dad = chosen.first;
+    PhyloNode *node = chosen.second;
+    PhyloNode *grandDad = (dad == sibling1) ? sibling2 : sibling1;
+    double lastHopLength = dad->findNeighbor(node)->length;
+    remaining -= lastHopLength;
+    // step 1's own candidate is always a real, already-existing edge (see
+    // chooseGraft's own comment: sibling1/sibling2's neighbors, excluding
+    // pruneDad, are never collapsed candidates) -- so this is always a
+    // legal place to fall back to if the walk below never reaches another
+    // one before hitting maxHops
+    PhyloNode *lastRealDad = dad, *lastRealNode = node;
+    bool currentIsVirtual = false;
+
+    int hops = 1;
+    const int maxHops = std::max(1000, 50 * (2 * (int) tree.leafNum - 3));
+    bool stopped = (remaining <= 0.0); // already exhausted after step 1 alone
+
+    struct HopCandidate { PhyloNode *node; double length; bool virtualHop; };
+
+    while (!stopped && hops < maxHops) {
+        vector<HopCandidate> tier1, tier2;
+        FOR_NEIGHBOR_IT(node, dad, it) {
+            PhyloNode *raw = (PhyloNode*) (*it)->node;
+            PhyloNode *cand = collapsePruneDad(node, raw, pruneDad, pruneNode);
+            if (cand == root || cand == pruneNode)
+                continue;
+            bool virt = (raw == pruneDad);
+            double len = (*it)->length + (virt ? pruneDad->findNeighbor(cand)->length : 0.0);
+            tier1.push_back(HopCandidate{cand, len, virt});
+        }
+        FOR_NEIGHBOR_IT(dad, node, it) {
+            PhyloNode *raw = (PhyloNode*) (*it)->node;
+            PhyloNode *cand = collapsePruneDad(dad, raw, pruneDad, pruneNode);
+            if (cand == grandDad || cand == root || cand == pruneNode)
+                continue;
+            bool virt = (raw == pruneDad);
+            double len = (*it)->length + (virt ? pruneDad->findNeighbor(cand)->length : 0.0);
+            tier2.push_back(HopCandidate{cand, len, virt});
+        }
+
+        bool moved = true;
+        if (!tier1.empty()) {
+            HopCandidate pick = tier1[random_int((int) tier1.size())];
+            grandDad = dad;
+            dad = node;
+            node = pick.node;
+            remaining -= pick.length;
+            lastHopLength = pick.length;
+            currentIsVirtual = pick.virtualHop;
+        } else if (!tier2.empty()) {
+            HopCandidate pick = tier2[random_int((int) tier2.size())];
+            remaining += lastHopLength; // sideways: refund the abandoned edge
+            grandDad = node;
+            node = pick.node;
+            remaining -= pick.length;
+            lastHopLength = pick.length;
+            currentIsVirtual = pick.virtualHop;
+        } else if (virtuallyAdjacent(dad, grandDad, pruneDad)) {
+            bool backEdgeReal = dad->isNeighbor(grandDad);
+            double backLen = backEdgeReal
+                ? dad->findNeighbor(grandDad)->length
+                // still pruneDad's own two (as-yet uncollapsed) siblings --
+                // same combined-length convention as siblingEdgeLength above
+                : pruneDad->findNeighbor(dad)->length + pruneDad->findNeighbor(grandDad)->length;
+
+            remaining += lastHopLength; // backward: refund the edge being left
+            // no charge for backLen -- (grandDad,dad) was already paid for
+            // earlier in the path (see this function's own comment)
+            PhyloNode *oldDad = dad, *oldNode = node;
+            dad = grandDad;
+            node = oldDad;
+            grandDad = oldNode;
+            lastHopLength = backLen;
+            currentIsVirtual = !backEdgeReal;
+        } else {
+            moved = false; // no legal move at all this step (tiny tree)
+        }
+
+        if (!moved)
+            break;
+        hops++;
+        if (!currentIsVirtual) {
+            lastRealDad = dad;
+            lastRealNode = node;
+        }
+        if (remaining <= 0.0 && !currentIsVirtual)
+            stopped = true;
+        // else: still have budget, or ran out but landed on an edge that
+        // doesn't exist yet -- either way, keep going (maxHops bounds it)
+    }
+
+    outDad = currentIsVirtual ? lastRealDad : dad;
+    outNode = currentIsVirtual ? lastRealNode : node;
+    if (outHops)
+        *outHops = hops;
+
+    SPRMove move;
+    move.prune_node = pruneNode;
+    move.prune_dad = pruneDad;
+    move.regraft_node = outNode;
+    move.regraft_dad = outDad;
+    ASSERT(tree.isLegalSPR(move));
+
+    return true;
+}
+
+/**
     bookkeeping stashed by applySPRTracked so rollbackSPRTracked can restore
     the registry (not just the tree) to its exact prior state.
  */
@@ -2578,7 +2801,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         bool investigateFlag = false, int investigateRadius = 1, bool alternateFlag = false,
         bool shrinkFlag = false, int shrinkStallThreshold = 10, bool sweepFlag = false, int sweepCount = 10,
         bool findoptFlag = false, int findoptEveryNSteps = 0,
-        bool iqtreeStart = false, int iqtreeStartPoolSize = 20, bool noTrueTree = false) {
+        bool iqtreeStart = false, int iqtreeStartPoolSize = 20, bool noTrueTree = false,
+        bool useDistanceRadius = false) {
     double cpuClockStart = getCPUTime();
     if (findoptFlag && findoptEveryNSteps <= 0)
         findoptEveryNSteps = maxSteps; // "default = total number of steps"
@@ -2682,6 +2906,10 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     if (useFastSelection)
         cout << "selection       : fast (choosePrune/chooseGraft proposal, not exhaustive)"
              << (numCandidates > 1 ? ", " + to_string(numCandidates) + " candidates/step" : "") << endl;
+    if (useFastSelection && useDistanceRadius)
+        cout << "distradius      : radius " << radius << " read as " << radius
+             << "% of the tree's total branch length, walked by summed branch"
+                " length instead of hop count" << endl;
     if (reoptimizeBranchLengths)
         cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on each candidate's 3 "
                 "changed edges before scoring, experimental" << endl;
@@ -3040,7 +3268,15 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             for (int c = 0; c < numCandidates; c++) {
                 PhyloNode *candNode, *candDad;
                 int walkLength;
-                if (!chooseGraft(tree, pruneNode, pruneDad, effectiveRadius, candNode, candDad, &walkLength))
+                // useDistanceRadius ("distradius") swaps in
+                // chooseGraftByDistance, which reinterprets effectiveRadius
+                // as a percentage of the tree's total branch length and
+                // walks by actual summed branch length instead of hop
+                // count -- see its own comment for the full mechanics
+                bool found = useDistanceRadius
+                    ? chooseGraftByDistance(tree, pruneNode, pruneDad, effectiveRadius, candNode, candDad, &walkLength)
+                    : chooseGraft(tree, pruneNode, pruneDad, effectiveRadius, candNode, candDad, &walkLength);
+                if (!found)
                     continue; // this draw found no legal target; try the next one
 
                 SPRMove move;
@@ -3941,7 +4177,7 @@ void printUsage(const char *prog) {
     cerr << "      for protein). Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree] [distradius]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -3949,7 +4185,7 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt (skipped with 'notree', see below). Fourteen optional trailing" << endl;
+    cerr << "      output.txt (skipped with 'notree', see below). Fifteen optional trailing" << endl;
     cerr << "      flags, in any order:" << endl;
     cerr << "        random     start from a random Yule-Harding topology instead of the" << endl;
     cerr << "                   default BioNJ estimate tree" << endl;
@@ -4137,6 +4373,18 @@ void printUsage(const char *prog) {
     cerr << "                   not the true tree or RF line); 'record' still works, writing NaN" << endl;
     cerr << "                   for the 'gap to true tree' column since there's no true tree to" << endl;
     cerr << "                   compare against. Every other flag works the same as usual" << endl;
+    cerr << "        distradius only affects 'fast' mode's own candidate draws: replaces" << endl;
+    cerr << "                   chooseGraft's directed random walk (fixed number of edge hops) with" << endl;
+    cerr << "                   chooseGraftByDistance, which reinterprets <radius> as a PERCENTAGE" << endl;
+    cerr << "                   of the tree's own total branch length (normalized -- the same value" << endl;
+    cerr << "                   means the same thing regardless of this dataset's branch-length" << endl;
+    cerr << "                   scale) and walks by actual summed branch length instead of hop" << endl;
+    cerr << "                   count, stopping ON whichever edge exhausts that budget (not the one" << endl;
+    cerr << "                   before it). Sideways/backward hops refund the distance of the edge" << endl;
+    cerr << "                   they abandon rather than spend it, since neither is real outward" << endl;
+    cerr << "                   progress from the prune point; a generous hop-count cap guarantees" << endl;
+    cerr << "                   termination regardless. No effect outside 'fast' mode. EXPERIMENTAL" << endl;
+    cerr << "                   -- see chooseGraftByDistance's comment in the source" << endl;
     cerr << endl;
     cerr << "  " << prog << " --branchlength-compare <alisim-tree.treefile> <radius> <max-steps>" << endl;
     cerr << "      NOT a search: applies the SAME sequence of random SPR moves to FOUR" << endl;
@@ -4336,6 +4584,19 @@ void printUsage(const char *prog) {
     reference output entirely (see noTrueTree's uses on runHillClimb) --
     everything else about the search (starting tree method, radius,
     selection, model, etc.) is unaffected.
+
+    "distradius" only affects "fast" mode's own candidate draws --
+    chooseGraft's directed random walk is replaced with
+    chooseGraftByDistance, which reinterprets <radius> as a PERCENTAGE of
+    the tree's own total branch length (normalized, so the same value
+    means the same thing regardless of this dataset's particular branch-
+    length scale) rather than a fixed number of edge hops, and walks by
+    actual summed branch length instead of hop count. See
+    chooseGraftByDistance's own comment for the full mechanics (why
+    sideways/backward hops refund distance rather than spend it, and why
+    the walk stops ON the edge that exhausts the budget rather than the
+    one before it). Has no effect outside "fast" mode (the exhaustive
+    scan's findGraftPositions has no distance-based counterpart).
     @return false if any trailing argument isn't recognized
  */
 bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
@@ -4344,7 +4605,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
         bool &recordProgress, bool &investigateFlag, int &investigateRadius,
         bool &alternateFlag, bool &shrinkFlag, int &shrinkStallThreshold, bool &sweepFlag, int &sweepCount,
         bool &findoptFlag, int &findoptEveryNSteps, bool &iqtreeStart, int &iqtreeStartPoolSize,
-        bool &noTrueTree) {
+        bool &noTrueTree, bool &useDistanceRadius) {
     randomStart = false;
     iqtreeStart = false;
     iqtreeStartPoolSize = 20;
@@ -4367,6 +4628,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     findoptFlag = false;
     findoptEveryNSteps = 0;
     noTrueTree = false;
+    useDistanceRadius = false;
     for (int i = fromIndex; i < argc; i++) {
         string arg = argv[i];
         if (arg == "random" && !randomStart)
@@ -4467,6 +4729,8 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
             }
         } else if (arg == "notree" && !noTrueTree)
             noTrueTree = true;
+        else if (arg == "distradius" && !useDistanceRadius)
+            useDistanceRadius = true;
         else
             return false;
     }
@@ -4491,20 +4755,20 @@ int main(int argc, char **argv) {
     if (argc >= 5 && string(argv[1]) == "--hillclimb") {
         bool randomStart, useFastSelection, quiet, reoptimizeBranchLengths, fullReoptInitialFit, useGtrModel;
         bool recordProgress, investigateFlag, alternateFlag, shrinkFlag, sweepFlag, findoptFlag, iqtreeStart;
-        bool noTrueTree;
+        bool noTrueTree, useDistanceRadius;
         int numCandidates, fullReoptEveryNSteps, fullReoptRounds, investigateRadius;
         int shrinkStallThreshold, sweepCount, findoptEveryNSteps, iqtreeStartPoolSize;
         if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet, numCandidates,
                 reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds, fullReoptInitialFit, useGtrModel,
                 recordProgress, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
                 shrinkStallThreshold, sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                iqtreeStart, iqtreeStartPoolSize, noTrueTree)) {
+                iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius)) {
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), randomStart, useFastSelection, quiet,
                     numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds,
                     fullReoptInitialFit, useGtrModel, recordProgress, investigateFlag,
                     investigateRadius, alternateFlag,
                     shrinkFlag, shrinkStallThreshold, sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                    iqtreeStart, iqtreeStartPoolSize, noTrueTree);
+                    iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius);
         }
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")

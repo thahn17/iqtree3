@@ -123,7 +123,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree]
+    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree] [distradius]
 
     First, generate a ground-truth tree and a DNA alignment simulated
     along it with the full iqtree3 binary's built-in AliSim feature (a
@@ -250,6 +250,21 @@ Tree argument convention (used by every command that takes a tree):
                      model, ...) works exactly the same as usual -- this is
                      for running the search on a real alignment you don't
                      have a known-correct tree for, not just AliSim output
+      distradius     only affects "fast" mode's own candidate draws:
+                     replaces chooseGraft's directed walk (a fixed number
+                     of edge hops) with chooseGraftByDistance, which reads
+                     <radius> as a PERCENTAGE of the tree's own total
+                     branch length instead -- normalized, so the same
+                     value means the same thing regardless of this
+                     dataset's branch-length scale -- and walks by actual
+                     summed branch length instead of hop count, stopping
+                     ON whichever edge exhausts that budget (not the edge
+                     before it). Sideways/backward hops refund the
+                     distance of whatever edge they abandon rather than
+                     spend it, since neither is real outward progress from
+                     the prune point; a generous hop-count cap guarantees
+                     the walk terminates regardless. No effect outside
+                     "fast" mode
 
     On completion (unless "notree"), prints the Robinson-Foulds (RF)
     distance between the original AliSim tree and the final tree, and
@@ -280,6 +295,7 @@ Tree argument convention (used by every command that takes a tree):
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt record
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt 100 record  (checked every 100 steps)
         build/spr_topology_test --hillclimb real_alignment.fasta 8 200 fast quiet notree      (no ground-truth tree; real_alignment.fasta read directly, any format/DNA-or-protein)
+        build/spr_topology_test --hillclimb sim.treefile 10 200 fast quiet distradius         (radius = 10% of total tree length, not 10 hops)
 
 
 6) Same-random-moves branch-length comparison (NOT a search)
