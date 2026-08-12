@@ -162,6 +162,20 @@ Tree argument convention (used by every command that takes a tree):
     toward <max-steps>; the search only stops early if the topology runs
     out of legal prune points entirely.
 
+    Candidate likelihood scoring uses path-based partial-likelihood
+    recomputation BY DEFAULT. For each trial SPR, dedicated scratch buffers
+    replace only the directed partials changed by the rewired edges and by
+    the path between the prune and graft positions; unaffected side-subtree
+    partials remain cached. Trial rollback restores the original cache
+    exactly. A locally improving winner is recomputed once using full cache
+    initialization before it is committed, providing a correctness boundary
+    and the valid baseline cache for the next step. A rejected winner rolls
+    back without a full reset. No flag is needed to enable this behavior.
+
+    Exception: "reopt" candidate scoring deliberately retains the previous
+    full deleteAllPartialLh()+initializeAllPartialLh() path because its
+    branch-length optimization performs broader cache invalidation.
+
     Optional trailing flags, any order (all but random/fast/quiet/gtr/
     record are EXPERIMENTAL -- informal testing found no measurable
     accuracy benefit over simpler alternatives, as noted per-flag):
@@ -296,6 +310,15 @@ Tree argument convention (used by every command that takes a tree):
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt 100 record  (checked every 100 steps)
         build/spr_topology_test --hillclimb real_alignment.fasta 8 200 fast quiet notree      (no ground-truth tree; real_alignment.fasta read directly, any format/DNA-or-protein)
         build/spr_topology_test --hillclimb sim.treefile 10 200 fast quiet distradius         (radius = 10% of total tree length, not 10 hops)
+
+    Reference benchmark on the checked-in sim.treefile/sim.fa (100 DNA
+    sequences, 10,000 sites): 400 paired fast-mode candidates took 0.578 CPU
+    seconds locally versus 10.469 seconds with full resets (18.108x faster),
+    with maximum absolute logL difference 2.33e-10 (floating-point noise, not
+    a correctness issue). An exhaustive run over 386 paired candidates
+    measured 0.469 versus 10.125 seconds (21.600x). See
+    PARTIAL_LIKELIHOOD_ATTEMPT.md for the root cause of the earlier
+    incorrect attempts and how this one differs.
 
 
 6) Same-random-moves branch-length comparison (NOT a search)

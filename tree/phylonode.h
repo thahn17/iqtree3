@@ -148,6 +148,25 @@ public:
         return size;
     }
 
+    /**
+        swap this direction's (partial_lh, scale_num, lh_scale_factor,
+        partial_lh_computed) state with the caller's — lets non-friend code
+        install a dedicated scratch buffer on a direction, and later restore
+        the original, without ever leaving partial_lh null in between (which
+        is what PhyloTree::reorientPartialLh's LM_PER_NODE buffer-stealing
+        path treats as "needs re-orienting"). Deliberately does not touch
+        `direction` or `size`: `size` is a topology-derived cache the caller
+        must invalidate itself if the topology changed (see PhyloNode::
+        computeSize), and `direction` is rooted-tree bookkeeping unrelated to
+        which buffer is installed.
+    */
+    void swapPartialLhState(double *&lh, UBYTE *&sn, double &sf, int &computed) {
+        double *tmpLh = partial_lh; partial_lh = lh; lh = tmpLh;
+        UBYTE *tmpSn = scale_num; scale_num = sn; sn = tmpSn;
+        double tmpSf = lh_scale_factor; lh_scale_factor = sf; sf = tmpSf;
+        int tmpComputed = partial_lh_computed; partial_lh_computed = computed; computed = tmpComputed;
+    }
+
 private:
 
     /**

@@ -1288,6 +1288,120 @@ void resetLikelihoodBuffers(PhyloTree &tree) {
 }
 
 /**
+    Local-recompute path for SPR trial scoring: instead of a full-tree
+    delete/reinitialize/recompute for every candidate, install dedicated
+    scratch buffers only on the directions whose represented subtree changes.
+    Those are the rewired edges, prune_node->prune_dad, and one direction of
+    every persistent edge on the removal-to-insertion path. The path entries
+    are the essential correction to the six-direction attempt documented in
+    PARTIAL_LIKELIHOOD_ATTEMPT.md: invalidating only the physically rewired
+    edges left plausible but stale partials between the two locations.
+ */
+struct SPRLocalLhCache {
+    vector<double*> lh;
+    vector<UBYTE*> scaleNum;
+    size_t lhCount, scaleCount;
+};
+
+void allocateSPRLocalLhCache(PhyloTree &tree, SPRLocalLhCache &cache) {
+    cache.lhCount = tree.getPartialLhSize();
+    cache.scaleCount = tree.getScaleNumSize();
+}
+
+void growSPRLocalLhCache(SPRLocalLhCache &cache, size_t count) {
+    while (cache.lh.size() < count) {
+        cache.lh.push_back(aligned_alloc<double>(cache.lhCount));
+        cache.scaleNum.push_back(aligned_alloc<UBYTE>(cache.scaleCount));
+    }
+}
+
+void freeSPRLocalLhCache(SPRLocalLhCache &cache) {
+    for (size_t i = 0; i < cache.lh.size(); i++) {
+        aligned_free(cache.lh[i]);
+        aligned_free(cache.scaleNum[i]);
+    }
+}
+
+/**
+    per-call bookkeeping for beginLocalSPRInvalidation/end...Discard below:
+    the affected PhyloNeighbor directions, and each
+    one's saved (partial_lh, scale_num, lh_scale_factor, partial_lh_computed)
+    from immediately before the swap -- exactly what it takes to put a
+    direction back exactly as found, whether or not it happened to be null/
+    uncomputed already (a real, common state under the default LM_PER_NODE
+    memory mode: only "away from root" directions get a persistent buffer
+    at startup, everything else starts null and is filled in on demand by
+    PhyloTree::reorientPartialLh's buffer-stealing).
+ */
+struct SPRLocalInvalidationState {
+    vector<PhyloNeighbor*> nei;
+    vector<double*> savedLh;
+    vector<UBYTE*> savedScaleNum;
+    vector<double> savedScaleFactor;
+    vector<int> savedComputed;
+};
+
+/**
+    swap in a dedicated scratch buffer (from `cache`) for every affected
+    direction, marking each dirty so the next
+    computeLikelihoodBranch call is forced to recompute it rather than
+    trust whatever content is already sitting in the scratch buffer from a
+    previous candidate's use of the same physical slot. Must be called
+    AFTER tree.applySPR() -- dad1/dad2/node2/sibling1/sibling2 name the
+    POST-move adjacency (dad1 is now adjacent to dad2, node2, and
+    unchanged node1; sibling1 is now adjacent to sibling2 directly).
+ */
+void beginLocalSPRInvalidation(SPRLocalLhCache &cache, SPRLocalInvalidationState &state,
+        const vector<PhyloNeighbor*> &affected) {
+    growSPRLocalLhCache(cache, affected.size());
+    state.nei = affected;
+    state.savedLh.resize(affected.size());
+    state.savedScaleNum.resize(affected.size());
+    state.savedScaleFactor.resize(affected.size());
+    state.savedComputed.resize(affected.size());
+    for (size_t i = 0; i < affected.size(); i++) {
+        double *lh = cache.lh[i];
+        UBYTE *sn = cache.scaleNum[i];
+        double sf = 0.0;
+        int computed = 0;
+        state.nei[i]->swapPartialLhState(lh, sn, sf, computed);
+        // swapPartialLhState mutated lh/sn/sf/computed in place to hold
+        // whatever was on `state.nei[i]` immediately before this call --
+        // exactly what endLocalSPRInvalidationDiscard needs to restore.
+        state.savedLh[i] = lh;
+        state.savedScaleNum[i] = sn;
+        state.savedScaleFactor[i] = sf;
+        state.savedComputed[i] = computed;
+    }
+}
+
+/**
+    Compute the candidate likelihood anchored on one of the newly split
+    target edges. The traversal follows the dirty removal-to-insertion path;
+    unaffected side-subtree partials remain cached.
+ */
+double computeLocalSPRLikelihood(PhyloTree &tree, PhyloNode *dad1, PhyloNode *dad2) {
+    return tree.computeLikelihoodBranch((PhyloNeighbor*) dad1->findNeighbor(dad2), dad1);
+}
+
+/**
+    undo a beginLocalSPRInvalidation call: every affected direction
+    goes back to exactly its pre-call (partial_lh, scale_num,
+    lh_scale_factor, partial_lh_computed), including back to null/
+    uncomputed if that's what it was. A provably perfect round trip --
+    swapPartialLhState is its own inverse given the same saved values.
+ */
+void endLocalSPRInvalidationDiscard(SPRLocalInvalidationState &state) {
+    for (size_t i = 0; i < state.nei.size(); i++) {
+        double *lh = state.savedLh[i];
+        UBYTE *sn = state.savedScaleNum[i];
+        double sf = state.savedScaleFactor[i];
+        int computed = state.savedComputed[i];
+        state.nei[i]->swapPartialLhState(lh, sn, sf, computed);
+    }
+}
+
+/**
     dad1's other two neighbors, BEFORE an SPR move is applied to
     (node1, dad1) -- these are exactly the two nodes that end up directly
     connected to each other once dad1 is bypassed (see applySPR's own
@@ -1426,7 +1540,7 @@ void reoptimizeSPREdges(PhyloTree &tree, PhyloNode *dad1, PhyloNode *dad2, Phylo
     cout.rdbuf(realCoutBuf);
 }
 
-double scoreTrialSPRMove(PhyloTree &tree, const SPRMove &move, bool reoptimizeBranchLengths) {
+double scoreTrialSPRMoveFullReset(PhyloTree &tree, const SPRMove &move, bool reoptimizeBranchLengths) {
     PhyloNode *sibling1 = nullptr, *sibling2 = nullptr;
     if (reoptimizeBranchLengths)
         findSPRSiblings(move.prune_node, move.prune_dad, sibling1, sibling2);
@@ -1454,6 +1568,88 @@ double scoreTrialSPRMove(PhyloTree &tree, const SPRMove &move, bool reoptimizeBr
 
     tree.rollbackSPR(rollback);
     resetLikelihoodBuffers(tree);
+    return score;
+}
+
+/**
+    path of nodes from `node` to `goal`, never passing through `blocked`
+    (the pruned subtree's own root, which must never be crossed since it's
+    leaving the removal-to-insertion path entirely) -- used by
+    collectSPRAffectedBeforeApply below to name every persistent edge whose
+    cached partial likelihood needs invalidating.
+ */
+bool findSPRNodePath(PhyloNode *node, PhyloNode *dad, PhyloNode *goal, PhyloNode *blocked,
+        vector<PhyloNode*> &path) {
+    if (node == blocked)
+        return false;
+    path.push_back(node);
+    if (node == goal)
+        return true;
+    FOR_NEIGHBOR_IT(node, dad, it) {
+        if (findSPRNodePath((PhyloNode*) (*it)->node, node, goal, blocked, path))
+            return true;
+    }
+    path.pop_back();
+    return false;
+}
+
+void addUniqueSPRAffected(vector<PhyloNeighbor*> &affected, PhyloNeighbor *nei) {
+    // Tip likelihoods come directly from the alignment and never use an
+    // internal partial-likelihood buffer.
+    if (nei->node->isLeaf())
+        return;
+    if (find(affected.begin(), affected.end(), nei) == affected.end())
+        affected.push_back(nei);
+}
+
+vector<PhyloNeighbor*> collectSPRAffectedBeforeApply(const SPRMove &move) {
+    vector<PhyloNode*> pathToDad, pathToNode;
+    ASSERT(findSPRNodePath(move.prune_dad, nullptr, move.regraft_dad, move.prune_node, pathToDad));
+    ASSERT(findSPRNodePath(move.prune_dad, nullptr, move.regraft_node, move.prune_node, pathToNode));
+    const vector<PhyloNode*> &path = pathToDad.size() < pathToNode.size() ? pathToDad : pathToNode;
+
+    vector<PhyloNeighbor*> affected;
+    addUniqueSPRAffected(affected,
+            (PhyloNeighbor*) move.prune_node->findNeighbor(move.prune_dad));
+    // path[0]-path[1] is removed when prune_dad is suppressed. The merged
+    // sibling edge is added after apply; every later edge persists, and its
+    // direction back toward the removal point is the cached subtree that
+    // changes when the pruned clade moves across it.
+    for (size_t i = 2; i < path.size(); i++)
+        addUniqueSPRAffected(affected,
+                (PhyloNeighbor*) path[i]->findNeighbor(path[i - 1]));
+    return affected;
+}
+
+void addSPRChangedEdgeDirections(vector<PhyloNeighbor*> &affected,
+        PhyloNode *dad1, PhyloNode *dad2, PhyloNode *node2,
+        PhyloNode *sibling1, PhyloNode *sibling2) {
+    PhyloNode *a[6] = {dad1, dad2, dad1, node2, sibling1, sibling2};
+    PhyloNode *b[6] = {dad2, dad1, node2, dad1, sibling2, sibling1};
+    for (int i = 0; i < 6; i++)
+        addUniqueSPRAffected(affected, (PhyloNeighbor*) a[i]->findNeighbor(b[i]));
+}
+
+double scoreTrialSPRMove(PhyloTree &tree, const SPRMove &move, bool reoptimizeBranchLengths,
+        SPRLocalLhCache *localCache = nullptr) {
+    if (!localCache || reoptimizeBranchLengths)
+        return scoreTrialSPRMoveFullReset(tree, move, reoptimizeBranchLengths);
+
+    PhyloNode *sibling1 = nullptr, *sibling2 = nullptr;
+    findSPRSiblings(move.prune_node, move.prune_dad, sibling1, sibling2);
+    vector<PhyloNeighbor*> affected = collectSPRAffectedBeforeApply(move);
+
+    SPRRollback rollback;
+    tree.applySPR(move, rollback);
+    addSPRChangedEdgeDirections(affected, move.prune_dad, move.regraft_dad, move.regraft_node,
+            sibling1, sibling2);
+
+    SPRLocalInvalidationState state;
+    beginLocalSPRInvalidation(*localCache, state, affected);
+    double score = computeLocalSPRLikelihood(tree, move.prune_dad, move.regraft_dad);
+    endLocalSPRInvalidationDiscard(state);
+
+    tree.rollbackSPR(rollback);
     return score;
 }
 
@@ -3202,6 +3398,13 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     int shrinkStallCount = 0;
     int shrinkCurrentRadius = radius;
 
+    // Reusable path-partial scratch buffers. Not used for branch-length
+    // reoptimization trials: those deliberately keep the full-reset path.
+    SPRLocalLhCache sprLocalCache;
+    bool haveSprLocalCache = !reoptimizeBranchLengths;
+    if (haveSprLocalCache)
+        allocateSPRLocalLhCache(tree, sprLocalCache);
+
     int step = 0;
     for (; step < maxSteps; step++) {
         int stepRadius = radius;
@@ -3290,7 +3493,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                 move.candidate_id = c;
                 move.generation = step;
 
-                double score = scoreTrialSPRMove(tree, move, reoptimizeBranchLengths);
+                double score = scoreTrialSPRMove(tree, move, reoptimizeBranchLengths,
+                        haveSprLocalCache ? &sprLocalCache : nullptr);
                 candidatesEvaluated++;
 
                 if (!haveBest || score > bestScore) {
@@ -3341,7 +3545,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                 move.candidate_id = (int) i;
                 move.generation = step;
 
-                double score = scoreTrialSPRMove(tree, move, reoptimizeBranchLengths);
+                double score = scoreTrialSPRMove(tree, move, reoptimizeBranchLengths,
+                        haveSprLocalCache ? &sprLocalCache : nullptr);
                 candidatesEvaluated++;
 
                 if (i == 0 || score > bestScore) {
@@ -3369,9 +3574,10 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
 
         TrackedSPR bestTracked;
         applySPRTracked(tree, edgeRegistry, bestMove, bestTracked);
-        resetLikelihoodBuffers(tree);
+        bool recomputedAppliedTopology = false;
 
         if (reoptimizeBranchLengths) {
+            resetLikelihoodBuffers(tree);
             // scoreTrialSPRMove's own reoptimization (used to pick this
             // candidate as the step's best) always gets rolled back along
             // with everything else once scoring is done -- redo it here,
@@ -3385,6 +3591,18 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             double realScore = tree.computeLikelihood();
             if (std::isfinite(realScore))
                 bestScore = realScore;
+            recomputedAppliedTopology = true;
+        } else if (bestScore > curScore) {
+            // The local score is sufficient to reject a non-improving
+            // proposal without touching the baseline cache. For a proposed
+            // improvement, recompute the winner once from scratch before
+            // committing it. This is both a correctness boundary and the
+            // fully-populated baseline cache for the next step.
+            resetLikelihoodBuffers(tree);
+            double realScore = tree.computeLikelihood();
+            if (std::isfinite(realScore))
+                bestScore = realScore;
+            recomputedAppliedTopology = true;
         }
 
         bool improved = bestScore > curScore;
@@ -3415,7 +3633,10 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                         curScore, trueTreeLogl);
         } else {
             rollbackSPRTracked(tree, edgeRegistry, bestTracked);
-            resetLikelihoodBuffers(tree);
+            if (recomputedAppliedTopology) {
+                resetLikelihoodBuffers(tree);
+                tree.computeLikelihood();
+            }
         }
 
         maybeRunPeriodicFullReopt(tree, step, fullReoptEveryNSteps, fullReoptRounds, useGtrModel, quiet,
@@ -3579,6 +3800,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     if (recordProgress)
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart, curScore,
                 trueTreeLogl);
+
+    if (haveSprLocalCache)
+        freeSPRLocalLhCache(sprLocalCache);
 
     if (!quiet)
         cout << endl;
