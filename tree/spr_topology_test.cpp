@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -505,6 +506,24 @@ bool isCherryAwayFrom(PhyloNode *node, PhyloNode *awayFrom) {
     (outNode,outDad) prune pair. Requires init_random() to already have
     been called once.
 
+    weightPrune (default false, the "weightprune" flag): instead of a
+    uniform O(1) array-index pick, draws the slot with probability
+    proportional to that edge's OWN branch length -- built as one
+    cumulative-weight array over the whole registry (the same
+    cumulative-sum technique chooseGraftDistance uses above, just applied
+    to real branch lengths instead of a flat per-distance weight), then
+    every retry attempt below draws from that same array via
+    upper_bound (O(log E) per draw, O(E) once up front to build it,
+    replacing choosePrune's normal O(1) per-pick cost). The intuition:
+    long branches are the ones most likely to be hiding a misplaced
+    subtree that ordinary short-hop NNI/SPR moves haven't already tried
+    moving -- see e.g. Whelan & Money (2010)-style long-branch-attraction
+    intuition for why a long branch is a natural place to concentrate
+    search effort. Falls back to the ordinary uniform pick if every edge
+    in the registry has zero total length (only possible in a degenerate
+    or freshly-collapsed tree, where "proportional to length" has no
+    well-defined meaning). EXPERIMENTAL.
+
     Every internal node is degree 3 and every leaf is degree 1 in the
     fully-bifurcating trees this tool works with, and applySPR/rollbackSPR
     never change any node's degree (see applySPRTracked below) -- so for a
@@ -541,15 +560,43 @@ bool isCherryAwayFrom(PhyloNode *node, PhyloNode *awayFrom) {
     2-leaf tree), or if every attempted pick has no valid orientation
     (bounded retries, see below)
  */
-bool choosePrune(PhyloTree &tree, EdgeRegistry &reg, PhyloNode* &outNode, PhyloNode* &outDad) {
+bool choosePrune(PhyloTree &tree, EdgeRegistry &reg, PhyloNode* &outNode, PhyloNode* &outDad,
+        bool weightPrune) {
     if (reg.slots.empty())
         return false;
+
+    // weightPrune: build the cumulative-weight array ONCE, outside the
+    // retry loop below -- the registry itself never changes across
+    // attempts within one choosePrune() call, so every attempt can safely
+    // draw from the same distribution instead of rebuilding it each time.
+    vector<double> cumWeight;
+    double totalWeight = 0.0;
+    if (weightPrune) {
+        cumWeight.resize(reg.slots.size());
+        for (size_t i = 0; i < reg.slots.size(); i++) {
+            pair<PhyloNode*, PhyloNode*> &e = reg.slots[i];
+            totalWeight += e.first->findNeighbor(e.second)->length;
+            cumWeight[i] = totalWeight;
+        }
+        if (totalWeight <= 0.0)
+            weightPrune = false; // nothing to weight by -- fall back to uniform
+    }
+
     // bounded retry: for a rooted tree, only edges adjacent to the root
     // can ever fail the orientation check below, a small fraction of the
     // registry, so this succeeds within the first few attempts in
     // practice; the bound just guarantees termination
     for (int attempt = 0; attempt < (int) reg.slots.size(); attempt++) {
-        pair<PhyloNode*, PhyloNode*> &edge = reg.slots[random_int((int) reg.slots.size())];
+        int slotIdx;
+        if (weightPrune) {
+            double x = random_double() * totalWeight;
+            slotIdx = (int) (upper_bound(cumWeight.begin(), cumWeight.end(), x) - cumWeight.begin());
+            if (slotIdx >= (int) reg.slots.size())
+                slotIdx = (int) reg.slots.size() - 1; // floating-point fallback; should only trigger on rounding
+        } else {
+            slotIdx = random_int((int) reg.slots.size());
+        }
+        pair<PhyloNode*, PhyloNode*> &edge = reg.slots[slotIdx];
         bool aIsDad = edge.first->degree() == 3;
         bool bIsDad = edge.second->degree() == 3;
         if (!aIsDad && !bIsDad)
@@ -951,8 +998,17 @@ bool chooseGraft(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int
     substitutions-per-site values or something on a completely different
     scale -- unlike a fixed absolute-length radius, which would need a
     different value per dataset to mean anything comparable.
+
+    radiusPercent is a double, not an int, even though every value that
+    ever reaches it from the command line is a whole number (atoi'd from
+    <radius>): "learnradius" (see its own comment on runHillClimb), when
+    composed with "distradius", draws a genuinely fractional percentage
+    from its own fitted distribution, and needs that fraction to survive
+    all the way to the actual budget rather than being rounded away first
+    -- the same "continuous" requirement learnRadiusContinuous's own
+    comment describes.
  */
-double distanceRadiusBudget(PhyloTree &tree, int radiusPercent) {
+double distanceRadiusBudget(PhyloTree &tree, double radiusPercent) {
     return (radiusPercent / 100.0) * tree.treeLength();
 }
 
@@ -1033,12 +1089,26 @@ double distanceRadiusBudget(PhyloTree &tree, int radiusPercent) {
     chooseGraft's outDistance, purely for logging -- this is a count of
     walk steps, not a distance).
 
+    outPercentUsed, if non-null, receives the equivalent radiusPercent that
+    would have been JUST enough budget to reach the returned edge -- i.e.
+    100 * (the actual summed branch length spent, budget minus whatever
+    `remaining` stood at when the walk stopped) / tree.treeLength() -- in
+    the SAME units as radiusPercent itself, unlike outHops. This is what
+    "learnradius" (see its own comment on runHillClimb) records into its
+    own history when composed with "distradius": bestDistance/outHops is a
+    walk-step count with no fixed relationship to radiusPercent's own
+    percentage scale (a handful of short branches or a few long ones can
+    both add up to the same budget), so it would be the wrong thing to feed
+    back into a distribution that's meant to predict FUTURE radiusPercent
+    values.
+
     @return false if there is no edge to graft onto at all (same
     3-leaf-tree case chooseGraft documents).
  */
-bool chooseGraftByDistance(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, int radiusPercent,
-        PhyloNode* &outNode, PhyloNode* &outDad, int *outHops = nullptr) {
+bool chooseGraftByDistance(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pruneDad, double radiusPercent,
+        PhyloNode* &outNode, PhyloNode* &outDad, int *outHops = nullptr, double *outPercentUsed = nullptr) {
     PhyloNode *root = (PhyloNode*) tree.root;
+    double budget = distanceRadiusBudget(tree, radiusPercent);
 
     vector<pair<PhyloNode*, PhyloNode*> > firstStep; // (dad=near, node=far)
     PhyloNode *sibling1 = nullptr, *sibling2 = nullptr;
@@ -1054,7 +1124,7 @@ bool chooseGraftByDistance(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pru
     if (firstStep.empty())
         return false;
 
-    double remaining = distanceRadiusBudget(tree, radiusPercent) - siblingEdgeLength;
+    double remaining = budget - siblingEdgeLength;
 
     pair<PhyloNode*, PhyloNode*> chosen = firstStep[random_int((int) firstStep.size())];
     PhyloNode *dad = chosen.first;
@@ -1152,6 +1222,11 @@ bool chooseGraftByDistance(PhyloTree &tree, PhyloNode *pruneNode, PhyloNode *pru
     outNode = currentIsVirtual ? lastRealNode : node;
     if (outHops)
         *outHops = hops;
+    if (outPercentUsed) {
+        double spent = budget - remaining;
+        double treeLen = tree.treeLength();
+        *outPercentUsed = (treeLen > 0.0) ? (100.0 * spent / treeLen) : 0.0;
+    }
 
     SPRMove move;
     move.prune_node = pruneNode;
@@ -1667,8 +1742,8 @@ string buildRunId(int radius, int maxSteps, bool randomStart,
         bool useFastSelection, int numCandidates, bool reoptimizeBranchLengths,
         int fullReoptEveryNSteps, int fullReoptRounds, bool fullReoptInitialFit, bool useGtrModel,
         bool investigateFlag, int investigateRadius, bool alternateFlag, bool shrinkFlag,
-        int shrinkStallThreshold, bool sweepFlag, int sweepCount, int findoptEveryNSteps,
-        bool iqtreeStart, int iqtreeStartPoolSize) {
+        int shrinkStallThreshold, bool learnradiusFlag, int learnradiusN, bool sweepFlag, int sweepCount,
+        int findoptEveryNSteps, bool iqtreeStart, int iqtreeStartPoolSize, bool weightpruneFlag) {
     time_t now = time(nullptr);
     char timestamp[32];
     strftime(timestamp, sizeof(timestamp), "%Y%m%d-%H%M%S", localtime(&now));
@@ -1697,10 +1772,14 @@ string buildRunId(int radius, int maxSteps, bool randomStart,
         id << "_alternate";
     if (shrinkFlag)
         id << "_shrink" << shrinkStallThreshold;
+    if (learnradiusFlag)
+        id << "_learnradius" << learnradiusN;
     if (sweepFlag)
         id << "_sweep" << sweepCount;
     if (findoptEveryNSteps > 0)
         id << "_findopt" << findoptEveryNSteps;
+    if (weightpruneFlag)
+        id << "_weightprune";
     return id.str();
 }
 
@@ -1799,13 +1878,64 @@ string buildRunId(int radius, int maxSteps, bool randomStart,
     under otherwise-identical flags are still a fair, meaningful
     comparison in the same file, distinguished by run_id (via buildRunId,
     which DOES include it) rather than needing yet another file.
+
+    learnradiusFlag follows shrinkFlag's own convention exactly (it's
+    mutually exclusive with shrinkFlag in the first place -- see
+    parseHillClimbFlags): included bare ("_learnradius", no window size)
+    rather than with learnradiusN appended. Different window sizes still
+    learn the SAME way -- a sliding-window Gamma fit determining the same
+    radius schedule, just refit over a shorter or longer history -- so they
+    belong side by side in one file, distinguished by run_id, the same way
+    shrinkStallThreshold's different values do.
+
+    useDistanceRadius ("distradius") is included too (bare "_distradius",
+    tucked right after "_fast" since it's specifically "fast" mode's own
+    candidate-draw mechanism, with no effect otherwise -- see its own
+    comment on parseHillClimbFlags): it swaps chooseGraft's fixed-hop-count
+    random walk for chooseGraftByDistance's summed-branch-length one, a
+    genuinely different candidate-generation mechanism with its own
+    cost/behavior profile (see chooseGraftByDistance's own comment), not
+    just a different value of an existing parameter -- exactly the kind of
+    difference every other tag in this function already exists to keep
+    separated. No number of its own to append (radiusPercent still varies
+    *within* the file via run_id's own "_r" field, the same as a plain hop
+    radius does), so it follows shrinkFlag's/learnradiusFlag's bare-tag
+    convention, not investigateRadius'/sweepCount's.
+
+    noTrueTree ("notree") is included last, independent of every search-mode
+    tag above it (it composes with any of them, unlike e.g. distradius which
+    only means anything under "fast"): unlike randomStart/useGtrModel/
+    fullReoptInitialFit -- deliberately EXCLUDED above because they only
+    affect the STARTING point or are already captured via modelName, never
+    the recorded trajectory's own shape -- noTrueTree changes what a
+    row's own "gap to true tree" column (appendRecordRow's trueTreeLogl -
+    logL) actually MEANS: with no ground-truth tree at all, that column is
+    written as NaN on every row (see appendRecordRow's own comment) instead
+    of a real, meaningful gap value. Mixing noTrueTree and normal runs in
+    one file would make that column's own data silently inconsistent --
+    real numbers on some rows, NaN on others -- exactly the kind of
+    misleading mix this function exists to prevent, so it earns its own
+    file the same way findopt's extra, differently-shaped rows do.
+
+    weightpruneFlag ("weightprune") is included too, bare ("_weightprune",
+    no number -- it has none of its own), the same way alternateFlag is:
+    it replaces choosePrune's uniform edge pick with one weighted by each
+    edge's own branch length (see choosePrune's own comment), a genuinely
+    different prune-edge selection bias with its own trajectory shape, not
+    just a different value of an existing parameter. Independent of every
+    other tag above it -- it composes freely with any of them, since it
+    only ever changes which edge gets pruned, never how the resulting
+    graft search itself proceeds.
  */
-string buildRecordTag(bool useFastSelection, bool reoptimizeBranchLengths, int fullReoptEveryNSteps,
-        bool investigateFlag, int investigateRadius, bool alternateFlag,
-        bool shrinkFlag, bool sweepFlag, int sweepCount, int findoptEveryNSteps) {
+string buildRecordTag(bool useFastSelection, bool useDistanceRadius, bool reoptimizeBranchLengths,
+        int fullReoptEveryNSteps, bool investigateFlag, int investigateRadius, bool alternateFlag,
+        bool shrinkFlag, bool learnradiusFlag, bool sweepFlag, int sweepCount, int findoptEveryNSteps,
+        bool noTrueTree, bool weightpruneFlag) {
     ostringstream tag;
     if (useFastSelection)
         tag << "_fast";
+    if (useDistanceRadius)
+        tag << "_distradius";
     if (reoptimizeBranchLengths)
         tag << "_reopt";
     if (fullReoptEveryNSteps > 0)
@@ -1816,10 +1946,16 @@ string buildRecordTag(bool useFastSelection, bool reoptimizeBranchLengths, int f
         tag << "_alternate";
     if (shrinkFlag)
         tag << "_shrink";
+    if (learnradiusFlag)
+        tag << "_learnradius";
     if (sweepFlag)
         tag << "_sweep" << sweepCount;
     if (findoptEveryNSteps > 0)
         tag << "_findopt";
+    if (noTrueTree)
+        tag << "_notree";
+    if (weightpruneFlag)
+        tag << "_weightprune";
     return tag.str();
 }
 
@@ -2087,6 +2223,388 @@ void maybeShrinkRadius(bool improved, int shrinkStallThreshold, bool quiet,
                  << shrinkCurrentRadius << ")" << endl;
         shrinkStallCount = 0;
     }
+}
+
+/**
+    standard-normal draw via Box-Muller, built on this tool's own
+    random_double() (uniform on [0,1)) rather than <random>'s
+    std::normal_distribution, purely so every source of randomness in this
+    file draws from the same seeded stream (init_random, seeded once in
+    runHillClimb) instead of mixing in a second, independently-seeded
+    generator. Used only as sampleStandardGamma's own building block below.
+ */
+double sampleStandardNormal() {
+    double u1 = random_double();
+    while (u1 <= 0.0) // log(0) below would be -inf; redraw the rare zero
+        u1 = random_double();
+    double u2 = random_double();
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * acos(-1.0) * u2);
+}
+
+/**
+    draw from a standard Gamma(shape, 1) distribution via Marsaglia & Tsang's
+    (2000) squeeze method -- the standard rejection-sampling algorithm for
+    shape >= 1 (their "A Simple Method for Generating Gamma Variables"),
+    with the well-known shape < 1 case handled by boosting to shape+1 and
+    correcting with an independent U^(1/shape) draw (the same reduction
+    <random>'s own std::gamma_distribution implementations use). learnRadius
+    below scales this standard draw by its own fitted scale parameter to get
+    an actual Gamma(shape, scale) sample.
+ */
+double sampleStandardGamma(double shape) {
+    if (shape < 1.0) {
+        double boosted = sampleStandardGamma(shape + 1.0);
+        double u = random_double();
+        while (u <= 0.0)
+            u = random_double();
+        return boosted * pow(u, 1.0 / shape);
+    }
+    double d = shape - 1.0 / 3.0;
+    double c = 1.0 / sqrt(9.0 * d);
+    for (;;) {
+        double x, v;
+        do {
+            x = sampleStandardNormal();
+            v = 1.0 + c * x;
+        } while (v <= 0.0);
+        v = v * v * v;
+        double u = random_double();
+        double x2 = x * x;
+        if (u < 1.0 - 0.0331 * x2 * x2)
+            return d * v;
+        if (log(u) < 0.5 * x2 + d * (1.0 - v + log(v)))
+            return d * v;
+    }
+}
+
+/**
+    "learnradius": records one more data point into the sliding window of
+    the last (up to) windowSize successfully-accepted "normal" moves' own
+    achieved radii, evicting the oldest once the window is full. Call ONLY
+    for a move that (a) actually improved curScore and (b) was not an
+    "investigate" refinement of a previous move -- see learnradiusFlag's
+    comment on runHillClimb for why investigation steps are excluded.
+    achievedRadius is deliberately a double, not an int, even though every
+    current caller passes an integer hop count (bestDistance/walkLength):
+    the window and the moment-fitting in learnRadius below are written to
+    operate on a continuous scale throughout, so this same machinery keeps
+    working unmodified if a future caller ever feeds it a genuinely
+    fractional (e.g. substitution-distance) achieved radius instead.
+ */
+void recordLearnRadiusSample(deque<double> &window, int windowSize, double achievedRadius) {
+    window.push_back(achievedRadius);
+    while ((int) window.size() > windowSize)
+        window.pop_front();
+}
+
+/**
+    "learnradius"'s STARTING distribution -- what learnRadiusContinuous
+    below draws from whenever there isn't (yet, or ever, on a losing
+    weighted coin flip) enough history to trust the Gamma fit instead; see
+    learnRadiusContinuous's own comment for how the two are mixed, and
+    learnradiusFlag's comment on runHillClimb for the full picture and the
+    reasoning behind this specific shape.
+
+    A trapezoidal density on [0, maxPath]: FLAT (uniform) from 0 up to
+    `center` -- the <radius> the user actually gave, reinterpreted, under
+    "learnradius", as the MIDDLE of this starting spread rather than a hard
+    ceiling -- then ramping down LINEARLY from `center` to `maxPath`,
+    reaching a density of exactly 0 at maxPath itself. maxPath is never
+    actually drawn (probability zero, not just unlikely): it's a
+    structural limit (every edge the tree has, or 100% of its own branch
+    length -- see this function's caller in runHillClimb for which,
+    depending on "distradius"), not a value <radius> should realistically
+    steer toward.
+
+    The flat and ramp pieces are normalized as ONE continuous density (the
+    ramp's own peak, right at `center`, sits at the SAME height the flat
+    piece already has there -- no seam/discontinuity), making this a
+    proper trapezoid rather than two independently-scaled pieces glued
+    together. Derivation of the flat/ramp split probability: let h be that
+    shared height at `center` (h is also the flat piece's own constant
+    height everywhere on [0,center]). flat area = h*center (a
+    center-by-h rectangle); ramp area = 0.5*h*(maxPath-center) (a right
+    triangle, base maxPath-center, height h). Requiring both areas to sum
+    to 1 (a valid density integrates to 1) gives h = 2/(center+maxPath),
+    and therefore
+        P(flat) = h*center = 2*center / (center+maxPath)
+        P(ramp) = 1 - P(flat) = (maxPath-center) / (center+maxPath)
+    Sampling: flip that weighted coin, then draw uniformly within the flat
+    piece or via the standard closed-form inverse CDF for a left-mode/
+    right-zero triangular distribution within the ramp piece (X = maxPath -
+    (maxPath-center)*sqrt(U), U ~ Uniform(0,1) -- the textbook inverse CDF
+    for a triangular distribution whose mode sits at its own left edge).
+
+    Falls back to a plain Uniform(0, center) (skipping the ramp piece
+    entirely) if maxPath <= center -- a degenerate/tiny-tree edge case
+    where there is no room left for a ramp at all (e.g. <radius> already at
+    or past the tree's own edge count).
+ */
+double sampleStartingRadius(double center, double maxPath) {
+    if (center <= 0.0)
+        return 0.0;
+    if (maxPath <= center)
+        return random_double() * center;
+
+    double flatProb = (2.0 * center) / (center + maxPath);
+    if (random_double() < flatProb)
+        return random_double() * center;
+
+    double u = random_double();
+    return maxPath - (maxPath - center) * sqrt(u);
+}
+
+/**
+    "learnradius": draw this step's search radius from a distribution
+    fitted to the sliding window recordLearnRadiusSample has been filling in
+    -- see learnradiusFlag's comment on runHillClimb for the full picture;
+    this is where the mixture it describes is actually implemented.
+
+    The window holds real-valued (not bucketed/rounded) observations
+    throughout, and every statistic computed from it here -- sample mean,
+    sample variance, the Gamma shape/scale method-of-moments fit, and
+    sampleStandardGamma's own continuous draw -- stays in double precision
+    all the way out to this function's own return value: nothing here
+    rounds or bucket the values. This is what "continuous" means in
+    learnradiusFlag's own comment: findGraftPositions/chooseGraft need an
+    INT hop count (rounding happens in runHillClimb's own step loop, the
+    only place that needs it), but chooseGraftByDistance's radiusPercent is
+    itself a double, and the whole point of composing "learnradius" with
+    "distradius" is to feed it a genuinely fractional percentage rather than
+    one rounded down to a whole number first -- see this function's own
+    caller in runHillClimb's step loop for exactly where that split happens.
+    Nothing about the fitting itself assumes the window's values are hop
+    counts specifically either: the same code works whether they happen to
+    be small integers (plain hop-count radius) or fine-grained percentages
+    (distradius), without caring which -- maybeFinalizeLearnRadiusExcursion
+    and the "fast"+"distradius" branch in runHillClimb's step loop are what
+    decide which kind actually goes into the window to begin with.
+
+    Distribution: a two-component mixture,
+        gammaWeight * Gamma(shape, scale) + (1 - gammaWeight) * sampleStartingRadius(center, maxPath)
+    where gammaWeight = min(kMaxGammaWeight, window.size() / windowSize) -- mostly
+    the "proportional part of the distribution" learnradiusFlag's comment
+    describes: 0 with an empty window (pure starting distribution, matching
+    "initially... uniform between 1 and the max radius" -- see
+    sampleStartingRadius's own comment for why that's now a trapezoid
+    centered on <radius>, not a flat Uniform(1,radius)), growing linearly
+    as the window fills -- EXCEPT it now caps out at kMaxGammaWeight rather
+    than reaching a full 1.0: even once windowSize successful moves have
+    accumulated, a small kMaxGammaWeight-complement chance of a fresh
+    sampleStartingRadius draw always remains, on every single call, for as
+    long as the run continues. Each call independently flips a weighted
+    coin between the two components rather than blending their outputs,
+    which is what makes the RESULT follow that mixture distribution
+    (blending two samples' VALUES would not).
+
+    shape/scale come from the standard method-of-moments Gamma fit (mean^2/
+    variance, variance/mean) to the window's current contents, but shape is
+    additionally capped at kMaxGammaShape (scale recomputed as mean/shape
+    afterward, to keep the fitted MEAN unchanged even though the capped
+    shape no longer matches the window's own raw sample variance exactly).
+    A Gamma's own coefficient of variation is 1/sqrt(shape), so this is a
+    floor on how tight the fitted spread can ever get -- shape would
+    otherwise grow without bound (and the fit collapse toward a near-point
+    mass at the sample mean) if the window ever filled with nearly-identical
+    achieved radii, which is exactly the outcome a search that has honed in
+    on one effective radius would naturally tend to keep producing on its
+    own: every additional near-identical sample would shrink the sample
+    variance further, which would shrink the fitted spread further, which
+    would make the NEXT drawn radius even more likely to land close enough
+    to keep reinforcing the same narrow cluster -- a self-tightening
+    feedback loop with nothing in it to ever loosen back up, left
+    unchecked. Capping shape breaks that loop directly: no matter how
+    tightly clustered the window's own data gets, every draw keeps a real,
+    bounded-below chance of landing meaningfully away from the current
+    mean, so if a genuinely different radius starts paying off, its own
+    achieved values can still enter the window and pull the fitted mean
+    toward it, rather than the fit having already locked itself out of
+    ever producing a large enough excursion to discover that in the first
+    place. When variance is unusable (fewer than 2 samples -- gated by this
+    function's own caller below, kept here as an explicit guard against
+    division by zero rather than relying on that alone -- or the raw
+    sample variance is ~0), shape falls back to kMaxGammaShape outright
+    instead of blowing up toward infinity or collapsing to a bare
+    `drawn = mean` point value the way this function's own earlier design
+    did.
+    kMaxGammaWeight and kMaxGammaShape are both EXPERIMENTAL -- picked as
+    round, defensible starting points (10% minimum ongoing exploration;
+    roughly 22% minimum coefficient of variation), not empirically tuned.
+
+    Unlike this function's own earlier design, the Gamma-fit component is
+    NOT clamped down to `center` (<radius>) at all -- real accumulated
+    history gets a genuine chance to push the learned radius past it, all
+    the way out to `maxPath`, the same structural ceiling
+    sampleStartingRadius's own ramp piece reaches zero density at. <radius>
+    only shapes the STARTING guess now (sampleStartingRadius's own
+    "middle"); it is never a hard cap on what the search can actually learn
+    to use, since the accumulated window can legitimately show that a
+    larger radius keeps paying off.
+ */
+double learnRadiusContinuous(const deque<double> &window, int windowSize, double center, double maxPath) {
+    const double kMaxGammaWeight = 0.9;
+    const double kMaxGammaShape = 20.0;
+
+    double gammaWeight = (windowSize > 0)
+        ? min(kMaxGammaWeight, ((double) window.size()) / (double) windowSize) : 0.0;
+    double drawn;
+    if (window.size() >= 2 && random_double() < gammaWeight) {
+        double mean = 0.0;
+        for (double v : window)
+            mean += v;
+        mean /= (double) window.size();
+        double variance = 0.0;
+        for (double v : window)
+            variance += (v - mean) * (v - mean);
+        variance /= (double) (window.size() - 1);
+        double shape = kMaxGammaShape;
+        if (variance > 1e-9 && mean > 0.0)
+            shape = min(kMaxGammaShape, (mean * mean) / variance);
+        double scale = (mean > 0.0) ? (mean / shape) : 0.0;
+        drawn = (mean > 0.0) ? (scale * sampleStandardGamma(shape)) : sampleStartingRadius(center, maxPath);
+    } else {
+        drawn = sampleStartingRadius(center, maxPath);
+    }
+    if (drawn < 1.0)
+        drawn = 1.0;
+    if (drawn > maxPath)
+        drawn = maxPath;
+    return drawn;
+}
+
+/**
+    plain, unrestricted hop distance between two REAL, already-existing
+    edges of the CURRENT tree, in findGraftPositions' own "radius"
+    convention (see its comment: radius 1 is an edge incident to either
+    endpoint of the seed edge, an NNI-equivalent distance; radius 2 one hop
+    further, and so on). Unlike findGraftPositions, this performs no
+    pruneNode-subtree exclusion and no isLegalSPR filtering -- both edges
+    given are assumed to already be real tree edges (not a hypothetical
+    prune/regraft pair), so a plain, unrestricted BFS is all that's needed,
+    seeded from the (seedA,seedB) edge exactly the way findGraftPositions
+    seeds from a collapsed sibling1/sibling2 view (see its comment) --
+    which is what makes radius 1 mean the same thing in both places.
+
+    Used only by learnradiusFlag's own "investigate"-excursion bookkeeping
+    (maybeFinalizeLearnRadiusExcursion below, and learnradiusFlag's comment
+    on runHillClimb) to measure how far an entire chain of investigate
+    refinements ended up from where it started, once the whole chain is
+    done -- in the SAME units findGraftPositions/chooseGraft already use
+    elsewhere in this file, so the result is directly comparable to a
+    plain (non-chained) move's own radius.
+
+    outLength, if non-null, receives the actual summed branch length along
+    that same path (not just its hop count) -- there is exactly one path
+    between any two edges of a tree, so the hop-count BFS below is already
+    tracing it; this just also accumulates each hop's own edge length along
+    the way. Used by maybeFinalizeLearnRadiusExcursion to convert an
+    excursion's displacement into a radiusPercent-equivalent when composed
+    with "distradius", the same way chooseGraftByDistance's own
+    outPercentUsed does for a single, non-chained move.
+
+    @return the hop distance, or -1 if the target edge is never reached
+    (should not happen for two edges of the same connected tree; guarded
+    rather than risking an infinite loop on any unexpected disconnection)
+ */
+int edgeHopDistance(PhyloNode *seedA, PhyloNode *seedB, PhyloNode *targetA, PhyloNode *targetB,
+        double *outLength = nullptr) {
+    pair<int,int> targetKey(min(targetA->id, targetB->id), max(targetA->id, targetB->id));
+    pair<int,int> seedKey(min(seedA->id, seedB->id), max(seedA->id, seedB->id));
+    if (targetKey == seedKey) {
+        if (outLength)
+            *outLength = 0.0;
+        return 0;
+    }
+
+    set<pair<int,int> > seenEdges;
+    seenEdges.insert(seedKey);
+
+    struct QueueItem {
+        PhyloNode *node;
+        PhyloNode *cameFrom;
+        int dist;
+        double lengthSoFar;
+    };
+    queue<QueueItem> q;
+    q.push({seedA, seedB, 0, 0.0});
+    q.push({seedB, seedA, 0, 0.0});
+
+    while (!q.empty()) {
+        QueueItem cur = q.front();
+        q.pop();
+
+        FOR_NEIGHBOR_IT(cur.node, cur.cameFrom, it) {
+            PhyloNode *next = (PhyloNode*) (*it)->node;
+            int edgeRadius = cur.dist + 1;
+            double edgeLength = cur.lengthSoFar + (*it)->length;
+
+            pair<int,int> key(min(cur.node->id, next->id), max(cur.node->id, next->id));
+            if (key == targetKey) {
+                if (outLength)
+                    *outLength = edgeLength;
+                return edgeRadius;
+            }
+            if (seenEdges.insert(key).second)
+                q.push({next, cur.node, edgeRadius, edgeLength});
+        }
+    }
+    return -1;
+}
+
+/**
+    "learnradius" + "investigate" together (see learnradiusFlag's comment
+    on runHillClimb): close out the CURRENTLY OPEN excursion, if there is
+    one, by measuring its net start-to-finish displacement and feeding that
+    single number into the learnradius window -- then mark the excursion
+    closed. A no-op (via excursionOpen's own guard) whenever there is
+    nothing open to close, so every caller below can call this
+    unconditionally on every path where an investigation attempt has just
+    ended (whether it failed to improve, after its own rollback, or found
+    no legal candidate at all) without first re-deriving whether an
+    excursion happens to be open.
+
+    currentDad is the CURRENT position of the excursion's own prune_dad --
+    i.e. pruneDad/investigatePruneDad as the caller's own local scope has
+    it at the moment of the call, already reflecting any rollback that
+    needed to happen first. Paired with excursionFinalNode (the last
+    successful step's own regraft_node, remembered across the whole
+    excursion), this reconstructs exactly one half of that last step's own
+    (now again real, since nothing has touched it since) graft edge -- see
+    the comment where excursionFinalNode is first set, on runHillClimb's
+    own step loop, for why using pruneDad's own THIRD edge (to pruneNode
+    itself) here instead would be off by one hop.
+
+    useDistanceRadius (the "distradius" flag): investigation refinements
+    are always hop-based regardless of it (investigatingThisStep always
+    goes through findGraftPositions/investigateRadius -- see
+    investigateFlag's comment on runHillClimb), so edgeHopDistance's own
+    hop count is what an excursion is made of either way. But the value
+    THIS function feeds back into the window has to match whatever units
+    the window's OTHER entries are in, so that a future
+    learnRadius(Continuous) draw from it means the same thing every time
+    it's used: with "distradius" also on, edgeHopDistance's outLength (the
+    actual summed branch length of the excursion's own path) is converted
+    to a radiusPercent-equivalent (100 * length / tree.treeLength()) the
+    same way chooseGraftByDistance's own outPercentUsed converts a single,
+    non-chained move's spent budget; without it, the plain hop count is
+    recorded as-is, exactly as before.
+ */
+void maybeFinalizeLearnRadiusExcursion(PhyloTree &tree, bool useDistanceRadius, bool &excursionOpen,
+        PhyloNode *anchorA, PhyloNode *anchorB, PhyloNode *excursionFinalNode, PhyloNode *currentDad,
+        deque<double> &window, int windowSize) {
+    if (!excursionOpen)
+        return;
+    double length = 0.0;
+    int dist = edgeHopDistance(anchorA, anchorB, excursionFinalNode, currentDad, &length);
+    if (dist >= 1) {
+        double achieved = dist;
+        if (useDistanceRadius) {
+            double treeLen = tree.treeLength();
+            achieved = (treeLen > 0.0) ? (100.0 * length / treeLen) : 0.0;
+        }
+        recordLearnRadiusSample(window, windowSize, achieved);
+    }
+    excursionOpen = false;
 }
 
 /**
@@ -2899,6 +3417,154 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     EXPERIMENTAL, including shrinkStallThreshold's own default -- picked
     as a starting point, not empirically tuned.
 
+    learnradiusFlag (default false; mutually exclusive with shrinkFlag --
+    parseHillClimbFlags rejects giving both, since they're two different
+    mechanisms competing to set the SAME stepRadius) replaces the step's own
+    radius with one drawn fresh each step from a distribution fit to recent
+    search history, rather than either a fixed <radius> or shrinkFlag's
+    one-directional narrowing schedule. learnRadiusContinuous (see its own
+    comment, just above maybeShrinkRadius' sibling functions
+    sampleStandardNormal/sampleStandardGamma) does the actual drawing; this
+    paragraph covers the policy, that function's comment covers the
+    mechanics.
+
+    learnRadiusWindow (declared just below investigateNext/
+    shrinkCurrentRadius, persisting across step-loop iterations the same
+    way) holds the last (up to) learnradiusN successfully-ACCEPTED moves'
+    own achieved radii. "Successful" means the move improved curScore (the
+    same `improved` flag shrinkFlag's own maybeShrinkRadius call uses). A
+    step forced to radius 1 by "alternate"'s own NNI-parity toggle feeds the
+    window exactly like any other accepted move: unlike investigation
+    (next paragraph), "alternate" is just a different way of picking THIS
+    step's radius, not a separate refinement phase layered on top of one
+    already-accepted move.
+
+    With investigateFlag OFF, each accepted move is its own, immediate,
+    length-1 data point, recorded as bestAchievedRadiusForLearning the
+    moment it's accepted -- see "distradius" below for what that actually
+    is; without "distradius" it's just bestDistance, the same value each
+    step's own log line already reports as "d=" (fast) or "distance "
+    (exhaustive).
+
+    With investigateFlag ON, an accepted move's own bestDistance/
+    bestAchievedRadiusForLearning is NOT what gets recorded: investigation
+    re-prunes and re-grafts the SAME (node,dad) pair repeatedly, each
+    attempt measured from wherever the PREVIOUS attempt in the chain left
+    it, at investigateRadius rather than the step's own learned radius --
+    so any one attempt's own achieved radius describes a local,
+    investigateRadius-scaled hop, not a radius the next FRESH excursion
+    could sensibly be started at. Instead, the whole chain -- the
+    initiating normal move plus every subsequent investigate refinement
+    that keeps improving -- is tracked as ONE excursion and recorded as ONE
+    number once it's fully done: the net displacement (edgeHopDistance)
+    from where the excursion STARTED (learnRadiusAnchorA/B, the
+    sibling1/sibling2 edge applySPRTracked's own TrackedSPR leaves behind
+    at the initiating move's pre-move position -- see applySPRTracked's
+    comment) to where it FINALLY settled (learnRadiusFinalNode paired with
+    the excursion's own current pruneDad, reconstructing the last
+    successful step's own regraft edge -- see
+    maybeFinalizeLearnRadiusExcursion's comment for why pruneDad's OWN edge
+    to pruneNode would be off by one hop here instead). Both are declared
+    alongside learnRadiusWindow and persist the same way. The excursion
+    closes -- and gets measured and recorded, via
+    maybeFinalizeLearnRadiusExcursion -- the moment an investigation
+    attempt fails to improve OR finds no legal candidate at all (i.e. the
+    same point investigateFlag's own comment says investigation itself
+    stops); every call site that can end a chain (both "no legal
+    candidate(s)" skip branches, and the normal reject/rollback path) calls
+    it unconditionally, since it no-ops on its own excursionOpen guard
+    whenever there's nothing open to close. A chain still open when
+    <max-steps> or "no degree-3 node left to prune" ends the loop entirely
+    is likewise finalized once, right after the loop, rather than
+    discarded.
+
+    "distradius": findGraftPositions/chooseGraft (everything except
+    "fast"+"distradius") are always hop-based, so what goes into the window
+    there is always an integer hop count, same as before. "fast"+
+    "distradius" is different -- chooseGraftByDistance's own bestDistance
+    is a walk-STEP count (outHops), which has no fixed relationship to
+    radiusPercent's own percentage scale (see its own comment: a handful of
+    long branches and many short ones can spend the same budget in wildly
+    different step counts), so recording it directly would feed the fitted
+    distribution numbers on a completely different scale than
+    sampleStartingRadius's own trapezoid (centered on <radius>, itself a
+    single-digit-to-low-double-digit percentage) and the radiusPercent
+    draws the whole mixture is meant to produce -- learnRadiusWindow would
+    fill with values like 20-50 while <radius> itself stays in single
+    digits, corrupting the Gamma fit's own mean/variance estimate (and,
+    before this function's own anti-collapse safeguards existed, would
+    have driven every draw to clamp at whatever ceiling was in force).
+    Avoided by recording chooseGraftByDistance's own outPercentUsed instead
+    (the equivalent radiusPercent that would have been JUST enough budget
+    to reach the accepted candidate) -- see bestAchievedRadiusForLearning
+    and outPercentUsed's own comment. The "investigate" excursion path gets
+    the same treatment: edgeHopDistance's own outLength (real summed branch
+    length along the excursion's path, not just its hop count) is converted
+    to a radiusPercent-equivalent by maybeFinalizeLearnRadiusExcursion the
+    same way, so the window stays in one consistent unit -- hop counts
+    without "distradius", radiusPercent-equivalents with it -- regardless
+    of whether "investigate" is also composed in.
+
+    Each step, learnRadiusContinuous(learnRadiusWindow, learnradiusN,
+    radius, learnRadiusMaxPath) draws stepRadiusContinuous from a
+    two-component mixture: a Gamma distribution fit (method of moments) to
+    the window's current contents, weighted by window.size()/learnradiusN,
+    mixed with sampleStartingRadius(radius, learnRadiusMaxPath) weighted by
+    the complement -- see sampleStartingRadius's own comment for that
+    component's shape. With an empty window this is 100%
+    sampleStartingRadius -- "initially, the distribution should be uniform
+    between 1 and the max radius" -- and the starting-distribution share
+    shrinks in direct proportion as successful moves accumulate. Unlike an
+    earlier version of this design, that share does NOT reach 0% outright:
+    it bottoms out at a small, permanent minimum (see
+    learnRadiusContinuous's own comment for kMaxGammaWeight) once
+    learnradiusN moves have landed, so a fresh sampleStartingRadius draw --
+    and therefore a genuine chance to notice a radius far from wherever the
+    fit has converged -- keeps happening for the rest of the run, not just
+    while the window is still filling up. From then on the window slides,
+    continuously refitting the SAME Gamma distribution over just the most
+    recent learnradiusN successes rather than the run's entire history, so
+    the learned radius can keep adapting if the search's own favored radius
+    drifts over a long run; the Gamma fit's own shape parameter is
+    additionally capped (see learnRadiusContinuous's own comment for
+    kMaxGammaShape) so it can never itself narrow all the way down to a
+    near-point-mass no matter how tightly clustered the window's recent
+    data happens to be -- between that cap and kMaxGammaWeight's own floor,
+    learnradius's whole distribution is guaranteed to keep moving in
+    response to new data for as long as the run continues, never
+    permanently locking onto one value. Recalculation is implicit and
+    free: learnRadiusContinuous refits from the window's raw contents on
+    every call rather than storing separate running shape/scale parameters
+    that would need their own incremental-update logic, since learnradiusN
+    is always small enough (a handful to a few dozen samples) that
+    repeating the fit from scratch each step is negligible next to a
+    single step's own likelihood evaluations.
+
+    learnRadiusMaxPath (declared alongside learnRadiusWindow, computed once
+    before the step loop since it never changes across a run) is the
+    structural ceiling both sampleStartingRadius's own ramp piece and the
+    Gamma-fit component are clamped to: edgeRegistry.slots.size() (no
+    simple path in the tree can use more hops than the tree has edges --
+    the same bound sweepFlag's own exhaustive full-tree search already
+    uses) normally, or 100.0 under "distradius" (100% of the tree's own
+    total branch length; a budget that size can already reach anywhere, so
+    there is nothing meaningful beyond it).
+
+    stepRadiusContinuous stays fractional all the way into
+    chooseGraftByDistance's own radiusPercent (effectiveRadiusContinuous,
+    the "alternate"-aware view of it) when "distradius" is active --
+    exactly the "continuous" requirement learnRadiusContinuous's own
+    comment describes, so a draw of e.g. 4.37 is used as 4.37%, not rounded
+    down to 4 first. stepRadius (plain int, rounded via llround and
+    clamped) is what findGraftPositions/chooseGraft's own int radius
+    parameter gets instead, since a fractional hop count has no meaning
+    there. The step's own printed label shows stepRadiusContinuous (2
+    decimal places) rather than stepRadius specifically when "learnradius"
+    and "distradius" are both active, so the log doesn't silently hide the
+    fraction actually being used.
+    EXPERIMENTAL, including learnradiusN's own default -- picked as a
+    starting point, not empirically tuned.
+
     sweepFlag (default false) adds a POST-PROCESSING phase that runs
     strictly AFTER the step loop above finishes -- with whatever mix of
     <max-steps> steps, fast/investigate/alternate/shrink shaped
@@ -2995,10 +3661,12 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         int fullReoptRounds = 100, bool fullReoptInitialFit = false, bool useGtrModel = false,
         bool recordProgress = false,
         bool investigateFlag = false, int investigateRadius = 1, bool alternateFlag = false,
-        bool shrinkFlag = false, int shrinkStallThreshold = 10, bool sweepFlag = false, int sweepCount = 10,
+        bool shrinkFlag = false, int shrinkStallThreshold = 10,
+        bool learnradiusFlag = false, int learnradiusN = 20,
+        bool sweepFlag = false, int sweepCount = 10,
         bool findoptFlag = false, int findoptEveryNSteps = 0,
         bool iqtreeStart = false, int iqtreeStartPoolSize = 20, bool noTrueTree = false,
-        bool useDistanceRadius = false) {
+        bool useDistanceRadius = false, bool weightpruneFlag = false) {
     double cpuClockStart = getCPUTime();
     if (findoptFlag && findoptEveryNSteps <= 0)
         findoptEveryNSteps = maxSteps; // "default = total number of steps"
@@ -3080,9 +3748,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // why this matters specifically for whether periodic re-optimization
     // is worth its cost.
     string modelName = modelNameFor(aln->seq_type, useGtrModel);
-    string recordTag = buildRecordTag(useFastSelection, reoptimizeBranchLengths, fullReoptEveryNSteps,
-            investigateFlag, investigateRadius, alternateFlag, shrinkFlag, sweepFlag, sweepCount,
-            findoptEveryNSteps);
+    string recordTag = buildRecordTag(useFastSelection, useDistanceRadius, reoptimizeBranchLengths,
+            fullReoptEveryNSteps, investigateFlag, investigateRadius, alternateFlag, shrinkFlag, learnradiusFlag,
+            sweepFlag, sweepCount, findoptEveryNSteps, noTrueTree, weightpruneFlag);
 
     // print this run's own settings BEFORE building the starting tree,
     // not after: constructing it (BioNJ is near-instant, but iqtreeStart's
@@ -3106,6 +3774,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         cout << "distradius      : radius " << radius << " read as " << radius
              << "% of the tree's total branch length, walked by summed branch"
                 " length instead of hop count" << endl;
+    if (weightpruneFlag)
+        cout << "weightprune     : prune edge chosen with probability proportional to its own "
+                "branch length instead of uniformly, experimental" << endl;
     if (reoptimizeBranchLengths)
         cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on each candidate's 3 "
                 "changed edges before scoring, experimental" << endl;
@@ -3130,6 +3801,13 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     if (shrinkFlag)
         cout << "shrink          : radius starts at " << radius << ", narrows by 1 (floor 1) after "
              << shrinkStallThreshold << " consecutive non-improving steps, experimental" << endl;
+    if (learnradiusFlag)
+        cout << "learnradius     : radius drawn each step from a Gamma fit (method-of-moments, capped spread) "
+                "to the last " << learnradiusN << " successful move(s)' own radius, mixed with a starting "
+                "distribution centered on " << radius << " (flat below it, tapering to zero at "
+             << (useDistanceRadius ? "100%" : "the tree's own edge count")
+             << ") in proportion to how many of those " << learnradiusN << " slot(s) are filled so far, "
+                "never reaching 100% Gamma, experimental" << endl;
     if (sweepFlag)
         cout << "sweep           : after all steps finish, exhaustive whole-tree regraft search on the "
              << sweepCount << " least-compatible sibling pair(s) (adjacent_subtree_compatibility.pdf), "
@@ -3373,8 +4051,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     string runId = buildRunId(radius, maxSteps, randomStart, useFastSelection,
             numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds, fullReoptInitialFit,
             useGtrModel, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
-            shrinkStallThreshold, sweepFlag, sweepCount, findoptEveryNSteps,
-            iqtreeStart, iqtreeStartPoolSize);
+            shrinkStallThreshold, learnradiusFlag, learnradiusN, sweepFlag, sweepCount, findoptEveryNSteps,
+            iqtreeStart, iqtreeStartPoolSize, weightpruneFlag);
     long candidatesEvaluated = 0;
     if (recordProgress)
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart, curScore,
@@ -3398,6 +4076,35 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     int shrinkStallCount = 0;
     int shrinkCurrentRadius = radius;
 
+    // "learnradius": persists across iterations like shrinkCurrentRadius
+    // above -- the sliding window recordLearnRadiusSample fills in after
+    // every accepted move (or, composed with "investigate", every
+    // completed excursion -- see below), refit fresh by
+    // learnRadiusContinuous() every time a new stepRadius is needed. See
+    // learnradiusFlag's comment on runHillClimb.
+    deque<double> learnRadiusWindow;
+    // "learnradius" + "investigate" together: tracks the CURRENTLY OPEN
+    // excursion, if any -- see learnradiusFlag's and
+    // maybeFinalizeLearnRadiusExcursion's comments for the full mechanics.
+    bool learnRadiusExcursionOpen = false;
+    PhyloNode *learnRadiusAnchorA = nullptr, *learnRadiusAnchorB = nullptr;
+    PhyloNode *learnRadiusFinalNode = nullptr;
+    // "learnradius"'s own structural ceiling -- sampleStartingRadius's own
+    // "largest path" (its ramp piece reaches zero density here, and the
+    // Gamma-fit component is clamped here too) -- fixed for the whole run,
+    // computed once rather than per-step since edgeRegistry's own edge
+    // count never changes across SPR moves (every move destroys exactly 3
+    // edges and creates exactly 3 more). "distradius" reads <radius> as a
+    // PERCENTAGE, so its own natural ceiling is 100 (100% of the tree's
+    // own total branch length -- see distanceRadiusBudget's comment; a
+    // walk given a 100% budget can already reach anywhere, so there is
+    // nothing meaningful beyond it); the plain hop-count case's ceiling is
+    // edgeRegistry.slots.size() -- the same bound sweepFlag's own
+    // exhaustive full-tree search already uses, since "no simple path in
+    // the tree can use more hops than the tree has edges" (see sweepFlag's
+    // comment on runHillClimb).
+    double learnRadiusMaxPath = useDistanceRadius ? 100.0 : (double) edgeRegistry.slots.size();
+
     // Reusable path-partial scratch buffers. Not used for branch-length
     // reoptimization trials: those deliberately keep the full-reset path.
     SPRLocalLhCache sprLocalCache;
@@ -3408,10 +4115,36 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     int step = 0;
     for (; step < maxSteps; step++) {
         int stepRadius = radius;
+        // stepRadiusContinuous mirrors stepRadius, except it's allowed to
+        // stay fractional -- only actually diverges from (double)stepRadius
+        // when "learnradius" is composed with "distradius" (see
+        // learnRadiusContinuous's own comment): chooseGraftByDistance's
+        // radiusPercent wants the genuinely continuous draw, everything
+        // else (findGraftPositions/chooseGraft's int radius, this step's
+        // own printed label) wants stepRadius, rounded
+        double stepRadiusContinuous = (double) radius;
         if (shrinkFlag)
             // "shrink" replaces the fixed <radius> with its own
             // stagnation-driven value
             stepRadius = shrinkCurrentRadius;
+        else if (learnradiusFlag) {
+            // "learnradius" replaces the fixed <radius> with a fresh draw
+            // from the Gamma/starting-distribution mixture fit to recent
+            // successes -- mutually exclusive with "shrink"
+            // (parseHillClimbFlags rejects giving both), so this is never
+            // reached when shrinkFlag is on. <radius> is passed as the
+            // MIDDLE of the starting distribution here, not a ceiling --
+            // the draw can legitimately land anywhere up to
+            // learnRadiusMaxPath once real history supports it; see
+            // learnRadiusContinuous's own comment
+            stepRadiusContinuous = learnRadiusContinuous(learnRadiusWindow, learnradiusN, (double) radius,
+                    learnRadiusMaxPath);
+            stepRadius = (int) llround(stepRadiusContinuous);
+            if (stepRadius < 1)
+                stepRadius = 1;
+            if (stepRadius > (int) learnRadiusMaxPath)
+                stepRadius = (int) learnRadiusMaxPath;
+        }
 
         bool investigatingThisStep = investigateFlag && investigateNext;
         // default to "not investigating next" -- only re-armed below, and
@@ -3431,29 +4164,49 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         // toggle. See alternateFlag's comment on runHillClimb.
         bool nniStepThisTime = alternateFlag && !investigatingThisStep && (step % 2 != 0);
         int effectiveRadius = nniStepThisTime ? 1 : stepRadius;
+        double effectiveRadiusContinuous = nniStepThisTime ? 1.0 : stepRadiusContinuous;
 
         PhyloNode *pruneNode, *pruneDad;
         if (investigatingThisStep) {
             pruneNode = investigatePruneNode;
             pruneDad = investigatePruneDad;
-        } else if (!choosePrune(tree, edgeRegistry, pruneNode, pruneDad)) {
+        } else if (!choosePrune(tree, edgeRegistry, pruneNode, pruneDad, weightpruneFlag)) {
             if (!quiet)
                 cout << "step " << (step + 1) << ": no degree-3 node left to prune from; stopping." << endl;
             step++;
             break;
         }
 
+        // stepRadiusText: stepRadius's own printed form -- plain integer,
+        // except when "learnradius" and "distradius" are both active, where
+        // stepRadius (rounded) would hide the actual fractional percentage
+        // chooseGraftByDistance is really about to use (effectiveRadiusContinuous)
+        string stepRadiusText;
+        if (learnradiusFlag && useDistanceRadius) {
+            ostringstream fmt;
+            fmt << fixed << setprecision(2) << stepRadiusContinuous;
+            stepRadiusText = fmt.str();
+        } else
+            stepRadiusText = to_string(stepRadius);
+
         string stepLabel;
         if (investigatingThisStep)
             stepLabel = "(investigate)";
         else if (alternateFlag)
-            stepLabel = nniStepThisTime ? "(nni)" : "(spr, radius " + to_string(stepRadius) + ")";
+            stepLabel = nniStepThisTime ? "(nni)" : "(spr, radius " + stepRadiusText + ")";
         else
-            stepLabel = "(radius " + to_string(stepRadius) + ")";
+            stepLabel = "(radius " + stepRadiusText + ")";
 
         PhyloNode *bestNode, *bestDad;
         int bestDistance;
         double bestScore;
+        // bestAchievedRadiusForLearning: what learnradiusFlag's own window
+        // actually records for this step, once accepted -- bestDistance
+        // (a hop count) everywhere EXCEPT "fast"+"distradius", where it's
+        // the equivalent radiusPercent instead (chooseGraftByDistance's own
+        // outPercentUsed), to stay in the same units as effectiveRadiusContinuous
+        // itself. See chooseGraftByDistance's outPercentUsed comment.
+        double bestAchievedRadiusForLearning = 0.0;
 
         if (useFastSelection && !investigatingThisStep) {
             // O(distance) proposal: draw numCandidates independent
@@ -3471,13 +4224,16 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             for (int c = 0; c < numCandidates; c++) {
                 PhyloNode *candNode, *candDad;
                 int walkLength;
+                double walkPercentUsed = 0.0;
                 // useDistanceRadius ("distradius") swaps in
-                // chooseGraftByDistance, which reinterprets effectiveRadius
-                // as a percentage of the tree's total branch length and
-                // walks by actual summed branch length instead of hop
-                // count -- see its own comment for the full mechanics
+                // chooseGraftByDistance, which reinterprets
+                // effectiveRadiusContinuous as a percentage of the tree's
+                // total branch length and walks by actual summed branch
+                // length instead of hop count -- see its own comment for
+                // the full mechanics
                 bool found = useDistanceRadius
-                    ? chooseGraftByDistance(tree, pruneNode, pruneDad, effectiveRadius, candNode, candDad, &walkLength)
+                    ? chooseGraftByDistance(tree, pruneNode, pruneDad, effectiveRadiusContinuous, candNode, candDad,
+                            &walkLength, &walkPercentUsed)
                     : chooseGraft(tree, pruneNode, pruneDad, effectiveRadius, candNode, candDad, &walkLength);
                 if (!found)
                     continue; // this draw found no legal target; try the next one
@@ -3502,6 +4258,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                     bestNode = candNode;
                     bestDad = candDad;
                     bestDistance = walkLength;
+                    bestAchievedRadiusForLearning = useDistanceRadius ? walkPercentUsed : (double) walkLength;
                     haveBest = true;
                 }
             }
@@ -3510,6 +4267,11 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                     cout << "step " << (step + 1) << " " << stepLabel << ": prune {"
                          << describeEdgeCompact(pruneNode, pruneDad) << "}"
                          << " -- no legal graft target found in " << numCandidates << " draw(s); skipping." << endl;
+                // finding no legal candidate at all also ends any
+                // currently-open "learnradius"+"investigate" excursion --
+                // see maybeFinalizeLearnRadiusExcursion's comment
+                maybeFinalizeLearnRadiusExcursion(tree, useDistanceRadius, learnRadiusExcursionOpen, learnRadiusAnchorA, learnRadiusAnchorB,
+                        learnRadiusFinalNode, pruneDad, learnRadiusWindow, learnradiusN);
                 continue;
             }
         } else {
@@ -3525,6 +4287,11 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                     cout << "step " << (step + 1) << " " << stepLabel << ": prune {"
                          << describeEdgeCompact(pruneNode, pruneDad) << "}"
                          << " -- no legal graft candidates; skipping." << endl;
+                // finding no legal candidate at all also ends any
+                // currently-open "learnradius"+"investigate" excursion --
+                // see maybeFinalizeLearnRadiusExcursion's comment
+                maybeFinalizeLearnRadiusExcursion(tree, useDistanceRadius, learnRadiusExcursionOpen, learnRadiusAnchorA, learnRadiusAnchorB,
+                        learnRadiusFinalNode, pruneDad, learnRadiusWindow, learnradiusN);
                 continue;
             }
 
@@ -3557,6 +4324,11 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             bestNode = bestCandidate.node;
             bestDad = bestCandidate.dad;
             bestDistance = bestCandidate.radius;
+            // findGraftPositions is always hop-based, "distradius" or not
+            // (it "has no distance-based counterpart" -- see distradius'
+            // own comment), so this branch's own achieved radius is
+            // always just bestDistance, same as before
+            bestAchievedRadiusForLearning = (double) bestDistance;
         }
 
         // apply the winning candidate for real, once, to decide whether to
@@ -3619,6 +4391,35 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
 
         if (improved) {
             curScore = bestScore;
+            if (learnradiusFlag) {
+                if (investigateFlag) {
+                    // see learnradiusFlag's comment on runHillClimb: a
+                    // "investigate"-chained excursion is measured as ONE
+                    // net displacement once it's fully done, not per
+                    // individual attempt
+                    if (!investigatingThisStep) {
+                        // this move starts a fresh excursion -- remember
+                        // where it started: the edge applySPRTracked's own
+                        // TrackedSPR leaves behind at pruneDad's pre-move
+                        // position (its sibling1/sibling2), exactly the
+                        // same collapsed view findGraftPositions/
+                        // chooseGraft themselves already use for radius 1
+                        learnRadiusExcursionOpen = true;
+                        learnRadiusAnchorA = bestTracked.sibling1;
+                        learnRadiusAnchorB = bestTracked.sibling2;
+                    }
+                    // every accepted step in the excursion (the initiating
+                    // one included) moves its own current resting point
+                    learnRadiusFinalNode = bestNode;
+                } else {
+                    // investigateFlag is off -- no excursion to chain,
+                    // this accepted move IS the whole (length-1)
+                    // "excursion" already; bestAchievedRadiusForLearning is
+                    // already in the right units either way (hop count, or
+                    // radiusPercent-equivalent under "distradius")
+                    recordLearnRadiusSample(learnRadiusWindow, learnradiusN, bestAchievedRadiusForLearning);
+                }
+            }
             if (investigateFlag) {
                 // this move -- whether it came from a fresh choosePrune or
                 // from investigating a previous one -- just improved the
@@ -3637,6 +4438,12 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                 resetLikelihoodBuffers(tree);
                 tree.computeLikelihood();
             }
+            // this investigation attempt just failed to improve -- if an
+            // excursion was open, it's over now (tree just rolled back to
+            // exactly where the last successful move in it left things);
+            // see maybeFinalizeLearnRadiusExcursion's comment
+            maybeFinalizeLearnRadiusExcursion(tree, useDistanceRadius, learnRadiusExcursionOpen, learnRadiusAnchorA, learnRadiusAnchorB,
+                    learnRadiusFinalNode, pruneDad, learnRadiusWindow, learnradiusN);
         }
 
         maybeRunPeriodicFullReopt(tree, step, fullReoptEveryNSteps, fullReoptRounds, useGtrModel, quiet,
@@ -3645,6 +4452,15 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         maybeRunFindopt(tree, step, findoptEveryNSteps, quiet, recordProgress, modelName, recordTag,
                 runId, candidatesEvaluated, cpuClockStart, trueTreeLoglForFindopt, curScore, aln, params);
     }
+
+    // a "learnradius"+"investigate" excursion still open when the loop
+    // above ended (<max-steps> reached, or "no degree-3 node left to
+    // prune") rather than via a failed investigation attempt -- finalize
+    // it here instead of discarding it; investigatePruneDad (rather than
+    // the now out-of-scope loop-local pruneDad) is exactly where it
+    // currently sits, since it's updated every time an excursion continues
+    maybeFinalizeLearnRadiusExcursion(tree, useDistanceRadius, learnRadiusExcursionOpen, learnRadiusAnchorA, learnRadiusAnchorB,
+            learnRadiusFinalNode, investigatePruneDad, learnRadiusWindow, learnradiusN);
 
     // "sweep": post-processing phase, run strictly AFTER the step loop
     // above has finished (with whatever mix of fast/investigate/
@@ -4401,7 +5217,7 @@ void printUsage(const char *prog) {
     cerr << "      for protein). Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree] [distradius]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -4409,7 +5225,7 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt (skipped with 'notree', see below). Fifteen optional trailing" << endl;
+    cerr << "      output.txt (skipped with 'notree', see below). Sixteen optional trailing" << endl;
     cerr << "      flags, in any order:" << endl;
     cerr << "        random     start from a random Yule-Harding topology instead of the" << endl;
     cerr << "                   default BioNJ estimate tree" << endl;
@@ -4550,6 +5366,34 @@ void printUsage(const char *prog) {
     cerr << "                   radius currently IS, which every other flag already reads through." << endl;
     cerr << "                   EXPERIMENTAL, including the default threshold -- see" << endl;
     cerr << "                   maybeShrinkRadius' comment in the source" << endl;
+    cerr << "        learnradius N   replace the step's own radius (mutually exclusive with" << endl;
+    cerr << "                   'shrink' -- both replace the same value, so giving both is a parse" << endl;
+    cerr << "                   error) with one drawn fresh each step from a Gamma distribution" << endl;
+    cerr << "                   (method-of-moments fit, spread capped so it can never fully collapse)" << endl;
+    cerr << "                   over the last N successfully-accepted moves' own achieved radius," << endl;
+    cerr << "                   mixed with a STARTING distribution centered on <radius> -- flat below" << endl;
+    cerr << "                   it, tapering linearly to zero at a structural ceiling (every edge the" << endl;
+    cerr << "                   tree has, or 100% of its own branch length under 'distradius') -- in" << endl;
+    cerr << "                   proportion to how many of those N slots are filled so far. <radius> is" << endl;
+    cerr << "                   the MIDDLE of that starting spread here, not a cap: the Gamma fit is" << endl;
+    cerr << "                   free to drift past it, all the way to that same structural ceiling," << endl;
+    cerr << "                   once real history supports it. The starting-distribution share never" << endl;
+    cerr << "                   reaches 0% either, even once N successes have accumulated -- a small," << endl;
+    cerr << "                   permanent minimum stays in force for the rest of the run, together" << endl;
+    cerr << "                   with the capped Gamma spread guaranteeing the whole distribution keeps" << endl;
+    cerr << "                   responding to new data rather than ever locking onto one value." << endl;
+    cerr << "                   Composed with 'investigate', each entry is not any one investigation" << endl;
+    cerr << "                   attempt's own local radius, but the NET distance, start to finish, of" << endl;
+    cerr << "                   the whole excursion (the initiating move plus every subsequent" << endl;
+    cerr << "                   investigate refinement that kept improving). Composed with" << endl;
+    cerr << "                   'distradius', draws stay fractional percentages (see distradius' own" << endl;
+    cerr << "                   entry above) instead of being rounded to hop-count integers first," << endl;
+    cerr << "                   and what feeds the history is the equivalent radiusPercent actually" << endl;
+    cerr << "                   used, not a walk-step/hop count -- so the two stay in the same unit" << endl;
+    cerr << "                   regardless of which mode is active. N omitted defaults to 20." << endl;
+    cerr << "                   EXPERIMENTAL, including the default window size -- see" << endl;
+    cerr << "                   learnRadiusContinuous'/sampleStartingRadius'/learnradiusFlag's" << endl;
+    cerr << "                   comments in the source" << endl;
     cerr << "        sweep N    AFTER every step above finishes, rank every internal edge of the" << endl;
     cerr << "                   tree by how well its own current 'siblings' are supported relative" << endl;
     cerr << "                   to the two single-NNI alternative regroupings around that same edge" << endl;
@@ -4607,8 +5451,21 @@ void printUsage(const char *prog) {
     cerr << "                   before it). Sideways/backward hops refund the distance of the edge" << endl;
     cerr << "                   they abandon rather than spend it, since neither is real outward" << endl;
     cerr << "                   progress from the prune point; a generous hop-count cap guarantees" << endl;
-    cerr << "                   termination regardless. No effect outside 'fast' mode. EXPERIMENTAL" << endl;
-    cerr << "                   -- see chooseGraftByDistance's comment in the source" << endl;
+    cerr << "                   termination regardless. No effect outside 'fast' mode. Composes with" << endl;
+    cerr << "                   'learnradius': draws stay fractional percentages (not rounded to" << endl;
+    cerr << "                   whole numbers first), and what feeds learnradius' own history is the" << endl;
+    cerr << "                   equivalent radiusPercent actually spent, not a walk-step count, so" << endl;
+    cerr << "                   the two stay in the same unit. EXPERIMENTAL -- see" << endl;
+    cerr << "                   chooseGraftByDistance's comment in the source" << endl;
+    cerr << "        weightprune  replace choosePrune's uniform random edge pick with one" << endl;
+    cerr << "                   weighted by each edge's own branch length -- long branches are" << endl;
+    cerr << "                   proportionally more likely to be chosen as the prune edge than" << endl;
+    cerr << "                   short ones, instead of every edge being equally likely regardless" << endl;
+    cerr << "                   of length. A bare flag, no numeric argument of its own; independent" << endl;
+    cerr << "                   of every other flag here (only changes WHICH edge gets pruned, never" << endl;
+    cerr << "                   how the graft search that follows proceeds), so it composes freely" << endl;
+    cerr << "                   with 'fast'/exhaustive, 'distradius', 'learnradius', 'investigate'," << endl;
+    cerr << "                   etc. EXPERIMENTAL -- see choosePrune's comment in the source" << endl;
     cerr << endl;
     cerr << "  " << prog << " --branchlength-compare <alisim-tree.treefile> <radius> <max-steps>" << endl;
     cerr << "      NOT a search: applies the SAME sequence of random SPR moves to FOUR" << endl;
@@ -4662,6 +5519,14 @@ void printUsage(const char *prog) {
     cerr << "                                                        (radius narrows on stagnation instead" << endl;
     cerr << "                                                         of a fixed schedule, experimental)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 8 5000 fast shrink 15  (same, stall threshold 15 instead of 10)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 8 5000 fast learnradius" << endl;
+    cerr << "                                                        (radius drawn each step from a Gamma fit to" << endl;
+    cerr << "                                                         the last 20 successful moves' own radius," << endl;
+    cerr << "                                                         mutually exclusive with shrink, experimental)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 8 5000 fast learnradius 30  (same, window of 30 instead of 20)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 8 5000 fast distradius learnradius" << endl;
+    cerr << "                                                        (fractional percentage drawn each step," << endl;
+    cerr << "                                                         e.g. \"radius 4.37\", experimental)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 8 500 fast sweep" << endl;
     cerr << "                                                        (after 500 fast steps, exhaustive whole-tree" << endl;
     cerr << "                                                         search on the 10 least-compatible sibling" << endl;
@@ -4674,6 +5539,9 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --hillclimb sim.treefile 6 500 fast quiet findopt 100 record" << endl;
     cerr << "                                                        (same, but checked every 100 steps" << endl;
     cerr << "                                                         instead of just once at the end)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 8 20 fast weightprune" << endl;
+    cerr << "                                                        (prune edge chosen proportional to its" << endl;
+    cerr << "                                                         own branch length, not uniformly)" << endl;
     cerr << "    " << prog << " --branchlength-compare sim.treefile 6 50" << endl;
     cerr << "                                                        (naive vs 3-edge-reopt vs full-sweep-x1 vs" << endl;
     cerr << "                                                         full-sweep-x10 branch lengths, same moves," << endl;
@@ -4765,6 +5633,40 @@ void printUsage(const char *prog) {
     defaults to 10. See shrinkFlag's and maybeShrinkRadius' comments on
     runHillClimb/in the source.
 
+    "learnradius" replaces the step's own radius with one drawn fresh each
+    step from a Gamma-vs-starting-distribution mixture fit to the last N
+    successfully-accepted moves' own achieved radii -- an adaptive
+    alternative to both the fixed <radius> and "shrink"'s one-directional
+    narrowing. <radius> is reinterpreted as the MIDDLE of the starting
+    spread, not a ceiling: the learned (Gamma) component is free to drift
+    anywhere up to a structural maximum (every edge the tree has, or 100%
+    of its own branch length under "distradius") once real history
+    supports it -- see sampleStartingRadius's and learnRadiusContinuous's
+    own comments in the source for the full distribution shape and the
+    safeguards (a capped mixture weight, a capped Gamma shape) that keep it
+    from ever permanently narrowing onto one value even after it's fully
+    converged. Composed with "investigate", each entry fed into that
+    history is not any one investigation attempt's own local radius, but
+    the NET distance, start to finish, of the whole excursion (the
+    initiating move plus every subsequent investigate refinement that kept
+    improving) -- see learnradiusFlag's comment on runHillClimb for why.
+    Composed with "distradius", draws stay genuinely fractional
+    percentages (not rounded to whole numbers before use), and what's fed
+    back into the history is the equivalent radiusPercent actually used
+    rather than a walk-step/hop count, so the fitted distribution stays in
+    one consistent unit -- see learnradiusFlag's own comment for why
+    recording the raw hop/step count there would have been wrong. Mutually
+    exclusive with "shrink" (checked below,
+    the same way randomStart/iqtreeStart are): both exist to replace the
+    SAME step's-own-radius value via two different, incompatible
+    mechanisms, so giving both is rejected as a parse failure rather than
+    silently letting one win. May optionally be immediately followed by a
+    positive integer, e.g. "learnradius 30" -- same parsing special case as
+    "fast N"/"shrink N": the sliding window size N. "learnradius" alone (N
+    omitted) defaults to 20. See learnradiusFlag's comment on runHillClimb
+    and learnRadiusContinuous's own comment in the source for the full
+    mechanics.
+
     "sweep" no longer touches the step loop's own selection logic at all --
     it runs as an added phase AFTER every step above has finished, so it
     composes freely with every other flag (including "investigate", no
@@ -4820,16 +5722,32 @@ void printUsage(const char *prog) {
     sideways/backward hops refund distance rather than spend it, and why
     the walk stops ON the edge that exhausts the budget rather than the
     one before it). Has no effect outside "fast" mode (the exhaustive
-    scan's findGraftPositions has no distance-based counterpart).
+    scan's findGraftPositions has no distance-based counterpart). Composes
+    with "learnradius" (see its own comment on runHillClimb): draws stay
+    genuinely fractional percentages rather than being rounded to whole
+    numbers first, and what "learnradius" records into its own history is
+    chooseGraftByDistance's own outPercentUsed (an equivalent radiusPercent)
+    rather than its outHops walk-step count, so the two stay in the same
+    unit.
+
+    "weightprune" replaces choosePrune's uniform random edge pick with one
+    weighted by each edge's own branch length -- a bare flag, no numeric
+    argument of its own. Independent of every other flag: it only ever
+    changes WHICH edge gets pruned, never how the resulting graft search
+    (fast or exhaustive, distradius or not, learnradius or not) proceeds
+    from there, so it composes freely with all of them. See choosePrune's
+    own comment for the mechanics.
     @return false if any trailing argument isn't recognized
  */
 bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
         bool &quiet, int &numCandidates, bool &reoptimizeBranchLengths,
         int &fullReoptEveryNSteps, int &fullReoptRounds, bool &fullReoptInitialFit, bool &useGtrModel,
         bool &recordProgress, bool &investigateFlag, int &investigateRadius,
-        bool &alternateFlag, bool &shrinkFlag, int &shrinkStallThreshold, bool &sweepFlag, int &sweepCount,
+        bool &alternateFlag, bool &shrinkFlag, int &shrinkStallThreshold,
+        bool &learnradiusFlag, int &learnradiusN,
+        bool &sweepFlag, int &sweepCount,
         bool &findoptFlag, int &findoptEveryNSteps, bool &iqtreeStart, int &iqtreeStartPoolSize,
-        bool &noTrueTree, bool &useDistanceRadius) {
+        bool &noTrueTree, bool &useDistanceRadius, bool &weightpruneFlag) {
     randomStart = false;
     iqtreeStart = false;
     iqtreeStartPoolSize = 20;
@@ -4847,12 +5765,15 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     alternateFlag = false;
     shrinkFlag = false;
     shrinkStallThreshold = 10;
+    learnradiusFlag = false;
+    learnradiusN = 20;
     sweepFlag = false;
     sweepCount = 10;
     findoptFlag = false;
     findoptEveryNSteps = 0;
     noTrueTree = false;
     useDistanceRadius = false;
+    weightpruneFlag = false;
     for (int i = fromIndex; i < argc; i++) {
         string arg = argv[i];
         if (arg == "random" && !randomStart)
@@ -4902,6 +5823,16 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
                 long n = strtol(argv[i + 1], &end, 10);
                 if (end != argv[i + 1] && *end == '\0' && n >= 1) {
                     shrinkStallThreshold = (int) n;
+                    i++; // consume the numeric argument too
+                }
+            }
+        } else if (arg == "learnradius" && !learnradiusFlag) {
+            learnradiusFlag = true;
+            if (i + 1 < argc) {
+                char *end = nullptr;
+                long n = strtol(argv[i + 1], &end, 10);
+                if (end != argv[i + 1] && *end == '\0' && n >= 1) {
+                    learnradiusN = (int) n;
                     i++; // consume the numeric argument too
                 }
             }
@@ -4955,6 +5886,8 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
             noTrueTree = true;
         else if (arg == "distradius" && !useDistanceRadius)
             useDistanceRadius = true;
+        else if (arg == "weightprune" && !weightpruneFlag)
+            weightpruneFlag = true;
         else
             return false;
     }
@@ -4962,6 +5895,12 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     // replace the tool's plain BioNJ estimate with something else, so
     // giving both at once has no well-defined meaning
     if (randomStart && iqtreeStart)
+        return false;
+    // shrink and learnradius are both alternative STEP RADIUS schedules --
+    // both replace the fixed <radius> with their own per-step value, via
+    // two different, incompatible mechanisms, so giving both at once has no
+    // well-defined meaning either
+    if (shrinkFlag && learnradiusFlag)
         return false;
     return true;
 }
@@ -4978,21 +5917,23 @@ int main(int argc, char **argv) {
         return runBranchLengthCompare(argv[2], atoi(argv[3]), atoi(argv[4]));
     if (argc >= 5 && string(argv[1]) == "--hillclimb") {
         bool randomStart, useFastSelection, quiet, reoptimizeBranchLengths, fullReoptInitialFit, useGtrModel;
-        bool recordProgress, investigateFlag, alternateFlag, shrinkFlag, sweepFlag, findoptFlag, iqtreeStart;
-        bool noTrueTree, useDistanceRadius;
+        bool recordProgress, investigateFlag, alternateFlag, shrinkFlag, learnradiusFlag, sweepFlag, findoptFlag;
+        bool iqtreeStart, noTrueTree, useDistanceRadius, weightpruneFlag;
         int numCandidates, fullReoptEveryNSteps, fullReoptRounds, investigateRadius;
-        int shrinkStallThreshold, sweepCount, findoptEveryNSteps, iqtreeStartPoolSize;
+        int shrinkStallThreshold, learnradiusN, sweepCount, findoptEveryNSteps, iqtreeStartPoolSize;
         if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet, numCandidates,
                 reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds, fullReoptInitialFit, useGtrModel,
                 recordProgress, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
-                shrinkStallThreshold, sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius)) {
+                shrinkStallThreshold, learnradiusFlag, learnradiusN, sweepFlag, sweepCount, findoptFlag,
+                findoptEveryNSteps, iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius,
+                weightpruneFlag)) {
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), randomStart, useFastSelection, quiet,
                     numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds,
                     fullReoptInitialFit, useGtrModel, recordProgress, investigateFlag,
                     investigateRadius, alternateFlag,
-                    shrinkFlag, shrinkStallThreshold, sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                    iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius);
+                    shrinkFlag, shrinkStallThreshold, learnradiusFlag, learnradiusN,
+                    sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
+                    iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius, weightpruneFlag);
         }
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")

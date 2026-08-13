@@ -123,7 +123,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [sweep [N]] [findopt [N]] [notree] [distradius]
+    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]
 
     First, generate a ground-truth tree and a DNA alignment simulated
     along it with the full iqtree3 binary's built-in AliSim feature (a
@@ -229,6 +229,87 @@ Tree argument convention (used by every command that takes a tree):
       shrink [N]     replace the fixed <radius> with one that starts at
                      <radius> and narrows by 1 (floor 1) after N (default
                      10) consecutive non-improving steps
+      learnradius [N] replace the fixed <radius> with one drawn fresh each
+                     step from a Gamma distribution (method-of-moments fit,
+                     spread capped -- see below) over the last N (default
+                     20) successfully-accepted moves' own achieved radius,
+                     mixed with a STARTING distribution in proportion to
+                     how many of those N slots are filled so far.
+
+                     <radius> is the MIDDLE of that starting distribution,
+                     not a ceiling: it's a trapezoid on [0, maxPath] --
+                     flat from 0 up to <radius>, then tapering LINEARLY
+                     down to a density of exactly zero at maxPath (never
+                     drawn) -- where maxPath is a structural limit, not a
+                     tuned number: every edge the tree has (no simple path
+                     can use more hops than that), or, composed with
+                     "distradius", 100 (100% of the tree's own branch
+                     length -- a budget that size can already reach
+                     anywhere). With an empty history this trapezoid is
+                     the WHOLE distribution; its own share shrinks in
+                     direct proportion as successful moves accumulate, but
+                     -- unlike an earlier version of this design -- never
+                     reaches zero: even once N successes have landed, a
+                     small, permanent minimum share of draws still comes
+                     from it for the rest of the run, and the Gamma fit's
+                     own spread is capped so it can never narrow all the
+                     way down to a single value either. Together those two
+                     floors mean the whole distribution keeps a genuine
+                     chance to respond to new data for as long as the run
+                     continues, rather than converging once and freezing:
+                     if a real move keeps landing far from wherever the
+                     fit has settled, that move's own achieved radius
+                     still enters the window and can pull the fit back
+                     into motion. The Gamma-fit component itself is NOT
+                     capped at <radius> at all (unlike the starting
+                     distribution's own middle) -- accumulated history can
+                     legitimately push the learned radius past <radius>,
+                     anywhere up to maxPath, if that's genuinely what's
+                     paying off. From N successes on, the window slides,
+                     continuously refitting over just the most recent N
+                     rather than the run's entire history, so the learned
+                     radius can also keep adapting if the search's own
+                     favored radius drifts over a long run. Every
+                     statistic involved (the window, its mean/variance,
+                     the fitted shape/scale, the draw itself) is computed
+                     in continuous (double-precision) terms throughout.
+
+                     Composed with "investigate": since an investigation
+                     attempt re-examines the SAME (node,dad) pair at a
+                     different, fixed radius (investigateRadius) rather
+                     than the step's own learned one, what feeds this
+                     history is not any individual attempt's own local
+                     radius, but ONE number per whole excursion -- the
+                     initiating move plus every subsequent investigate
+                     refinement that kept improving -- measured as the net
+                     displacement from where the excursion started to
+                     where it finally settled, recorded once the excursion
+                     ends (the next investigation attempt fails to improve
+                     or finds no legal candidate at all).
+
+                     Composed with "distradius": the draw stays that
+                     fractional percentage all the way into
+                     chooseGraftByDistance -- NOT rounded to a whole number
+                     first, unlike the plain hop-count case, which IS
+                     rounded (to an integer) before reaching
+                     findGraftPositions/chooseGraft, since a fractional hop
+                     count has no meaning there. What gets fed back into
+                     the window under "distradius" is also the equivalent
+                     radiusPercent actually spent (chooseGraftByDistance's
+                     own outPercentUsed, or, for an "investigate" excursion,
+                     the real summed branch length of its path converted
+                     the same way) -- NOT the walk-step/hop count
+                     chooseGraftByDistance's outHops reports, which has no
+                     fixed relationship to radiusPercent's own scale. This
+                     is what lets the same machinery work regardless of
+                     whether "radius" means a hop count (the normal case)
+                     or, composed with "distradius", a percentage of branch
+                     length -- see chooseGraftByDistance's own
+                     outPercentUsed comment in the source for the full
+                     reasoning. Mutually exclusive with "shrink" (both
+                     replace the same step value via different,
+                     incompatible mechanisms -- giving both is a parse
+                     error, not silently resolved)
       sweep [N]      after the step loop finishes, rank every internal
                      edge by how well its current grouping is supported
                      relative to its two single-NNI alternatives
@@ -278,7 +359,26 @@ Tree argument convention (used by every command that takes a tree):
                      spend it, since neither is real outward progress from
                      the prune point; a generous hop-count cap guarantees
                      the walk terminates regardless. No effect outside
-                     "fast" mode
+                     "fast" mode. Composes with "learnradius" -- see its
+                     own entry above
+      weightprune    replace choosePrune's uniform random edge pick with
+                     one weighted by each edge's own branch length instead
+                     -- long branches are proportionally more likely to be
+                     chosen as the prune edge than short ones, rather than
+                     every edge being equally likely regardless of length.
+                     Built as one cumulative-weight array over the whole
+                     edge registry (the same cumulative-sum technique used
+                     to weight graft distances), redrawn from with
+                     upper_bound each retry attempt; falls back to the
+                     ordinary uniform pick if every edge in the tree
+                     happens to have zero length. A bare flag, no numeric
+                     argument of its own. Independent of every other flag
+                     here -- it only ever changes WHICH edge gets pruned,
+                     never how the graft search that follows proceeds --
+                     so it composes freely with "fast"/exhaustive,
+                     "distradius", "learnradius", "investigate", etc.
+                     EXPERIMENTAL -- see choosePrune's comment in the
+                     source
 
     On completion (unless "notree"), prints the Robinson-Foulds (RF)
     distance between the original AliSim tree and the final tree, and
@@ -305,11 +405,15 @@ Tree argument convention (used by every command that takes a tree):
         build/spr_topology_test --hillclimb sim.treefile 8 20 fast investigate
         build/spr_topology_test --hillclimb sim.treefile 8 20 fast alternate
         build/spr_topology_test --hillclimb sim.treefile 8 5000 fast shrink 15
+        build/spr_topology_test --hillclimb sim.treefile 8 5000 fast learnradius       (Gamma-fit radius, window of 20)
+        build/spr_topology_test --hillclimb sim.treefile 8 5000 fast learnradius 30    (same, window of 30)
         build/spr_topology_test --hillclimb sim.treefile 8 500 fast sweep 20
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt record
         build/spr_topology_test --hillclimb sim.treefile 6 500 fast quiet findopt 100 record  (checked every 100 steps)
         build/spr_topology_test --hillclimb real_alignment.fasta 8 200 fast quiet notree      (no ground-truth tree; real_alignment.fasta read directly, any format/DNA-or-protein)
         build/spr_topology_test --hillclimb sim.treefile 10 200 fast quiet distradius         (radius = 10% of total tree length, not 10 hops)
+        build/spr_topology_test --hillclimb sim.treefile 8 5000 fast distradius learnradius   (fractional percentage drawn each step, e.g. "radius 4.37")
+        build/spr_topology_test --hillclimb sim.treefile 8 20 fast weightprune                (prune edge chosen proportional to its own branch length)
 
     Reference benchmark on the checked-in sim.treefile/sim.fa (100 DNA
     sequences, 10,000 sites): 400 paired fast-mode candidates took 0.578 CPU
