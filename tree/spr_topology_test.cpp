@@ -2000,8 +2000,23 @@ string recordSpreadsheetPath(const string &modelName, const string &recordTag) {
     return "record_" + sanitizedModel + recordTag + ".csv";
 }
 
+/**
+    companion path to recordSpreadsheetPath, for appendRecordRow's own
+    per-row topology dump (see its comment) -- same (model, recordTag)
+    naming scheme, "topology_" prefix and ".nwk" extension instead of
+    "record_"/".csv".
+ */
+string topologySpreadsheetPath(const string &modelName, const string &recordTag) {
+    string sanitizedModel = modelName;
+    for (char &c : sanitizedModel)
+        if (!isalnum((unsigned char) c))
+            c = '_';
+    return "topology_" + sanitizedModel + recordTag + ".nwk";
+}
+
 void appendRecordRow(const string &modelName, const string &recordTag, const string &runId,
-        long candidatesEvaluated, double timeElapsedSec, double logL, double trueTreeLogl) {
+        long candidatesEvaluated, double timeElapsedSec, double logL, double trueTreeLogl,
+        bool recordTopology, PhyloTree &treeForTopology) {
     string path = recordSpreadsheetPath(modelName, recordTag);
 
     ifstream check(path.c_str());
@@ -2013,6 +2028,28 @@ void appendRecordRow(const string &modelName, const string &recordTag, const str
         out << "run_id,candidates,time_elapsed,logL,true_minus_current" << endl;
     out << runId << "," << candidatesEvaluated << "," << timeElapsedSec << ","
         << setprecision(12) << logL << "," << (trueTreeLogl - logL) << endl;
+
+    if (!recordTopology)
+        return;
+
+    // Companion file, only written when the separate "recordtopology" flag
+    // is ALSO on (plain "record" alone writes only the CSV above, exactly
+    // as it did before this flag existed -- the Newick dump costs real
+    // time on large trees/long runs and most "record" uses have no need
+    // for it): this row's tree TOPOLOGY (no branch lengths -- downstream LP
+    // branch-length fitting refits those from scratch against a distance
+    // matrix, so shipping applySPR's placeholder/reoptimized lengths here
+    // would be pointless). One Newick line per CSV row, appended right here
+    // so the two files stay positionally aligned (line N of this file <->
+    // row N of the CSV, both counted after the CSV's own header) without
+    // needing a shared join key -- PROVIDED "recordtopology" was given on
+    // every run that contributed to this CSV; mixing runs with and without
+    // it breaks that row<->line correspondence, since a without-it run
+    // still appends CSV rows but no topology lines.
+    stringstream topologyLine;
+    treeForTopology.printTree(topologyLine, WT_SORT_TAXA);
+    ofstream topologyOut(topologySpreadsheetPath(modelName, recordTag).c_str(), ios::app);
+    topologyOut << topologyLine.str() << endl;
 }
 
 /**
@@ -2031,9 +2068,9 @@ void appendRecordRow(const string &modelName, const string &recordTag, const str
     how that step's own candidate was chosen.
  */
 void maybeRunPeriodicFullReopt(PhyloTree &tree, int step, int fullReoptEveryNSteps, int fullReoptRounds,
-        bool useGtrModel, bool quiet, bool recordProgress, const string &modelName, const string &recordTag,
-        const string &runId, long candidatesEvaluated, double cpuClockStart, double trueTreeLogl,
-        double &curScore) {
+        bool useGtrModel, bool quiet, bool recordProgress, bool recordTopology, const string &modelName,
+        const string &recordTag, const string &runId, long candidatesEvaluated, double cpuClockStart,
+        double trueTreeLogl, double &curScore) {
     if (!(fullReoptEveryNSteps > 0 && (step + 1) % fullReoptEveryNSteps == 0))
         return;
 
@@ -2050,7 +2087,7 @@ void maybeRunPeriodicFullReopt(PhyloTree &tree, int step, int fullReoptEveryNSte
         cout << "         (periodic full re-optimization: logL -> " << curScore << ")" << endl;
     if (recordProgress)
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart, curScore,
-                trueTreeLogl);
+                trueTreeLogl, recordTopology, tree);
 }
 
 /**
@@ -2117,9 +2154,9 @@ void maybeRunPeriodicFullReopt(PhyloTree &tree, int step, int fullReoptEveryNSte
     be an unfair reference whenever the main run isn't already useGtrModel).
  */
 void maybeRunFindopt(PhyloTree &tree, int step, int findoptEveryNSteps, bool quiet,
-        bool recordProgress, const string &modelName, const string &recordTag, const string &runId,
-        long candidatesEvaluated, double &cpuClockStart, double trueTreeLogl, double curScore, Alignment *aln,
-        Params &params) {
+        bool recordProgress, bool recordTopology, const string &modelName, const string &recordTag,
+        const string &runId, long candidatesEvaluated, double &cpuClockStart, double trueTreeLogl, double curScore,
+        Alignment *aln, Params &params) {
     if (!(findoptEveryNSteps > 0 && (step + 1) % findoptEveryNSteps == 0))
         return;
 
@@ -2172,7 +2209,7 @@ void maybeRunFindopt(PhyloTree &tree, int step, int findoptEveryNSteps, bool qui
              << ", main tree unaffected, still at " << curScore << ")" << endl;
     if (recordProgress && std::isfinite(findoptScore))
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, searchTimeSoFar, findoptScore,
-                trueTreeLogl);
+                trueTreeLogl, recordTopology, scratchTree);
 
     cpuClockStart += (getCPUTime() - t0); // pause the timer: this scratch pass never counts
 }
@@ -3042,6 +3079,30 @@ int runLikelihood(const string &treeArg, const string &alignmentFile) {
     bug elsewhere in this codebase's history (computeParsimony() silently
     returning 0 for every tree -- see the "Parsimony prescreen" entry in
     this tool's usage doc's "Retired experiments" section).
+
+    The model's own rate/frequency parameters (under "gtr") are fit ONCE,
+    on the first pool candidate, then held FIXED for every other
+    candidate, which is only ever branch-length-reoptimized
+    (PhyloTree::optimizeAllBranches) against that shared, already-fit
+    model -- this is the same shape real IQ-TREE's own
+    IQTree::initCandidateTreeSet uses (fit via ModelFinder once, then loop
+    readTreeString()+optimizeBranches() over the whole candidate pool on
+    one reused tree object, tree/iqtree.cpp), replacing an earlier version
+    of this function that instead called
+    ModelFactory::optimizeParameters() -- a full model+branch-length
+    refit -- independently on every candidate. That earlier approach was
+    both far slower (poolSize independent GTR+FO fits instead of one) and
+    less accurate as a pool ranking, since each candidate's score partly
+    reflected how well ITS OWN independently-refit model happened to land
+    rather than a shared, consistently-fit yardstick.
+
+    This requires reusing a SINGLE PhyloTree/ModelFactory pair across the
+    whole pool (readTreeString() to rebind each new topology onto it)
+    rather than one fresh pair per candidate (as initClonedTree/
+    runBranchLengthCompare's independent copies do): PhyloTree's own
+    destructor unconditionally deletes its model/site_rate/model_factory,
+    so handing the same ModelFactory to multiple independently-destructed
+    PhyloTree objects would double-free it.
  */
 string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &modelName, int poolSize) {
     if (aln->ordered_pattern.empty())
@@ -3059,59 +3120,100 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     parsScratch.setParsimonyKernel(LK_SSE2);
 
     int savedPrecision = params.numeric_precision;
-    string bestNewick;
-    double bestScore = -DBL_MAX;
+
+    vector<string> poolNewicks(poolSize);
     for (int i = 0; i < poolSize; i++) {
         parsScratch.computeParsimonyTree(nullptr, aln, randstream);
         params.numeric_precision = 15;
         ostringstream fullPrecisionNewick;
         parsScratch.printTree(fullPrecisionNewick, WT_BR_LEN);
         params.numeric_precision = savedPrecision;
+        poolNewicks[i] = fullPrecisionNewick.str();
+    }
 
-        // score this pool candidate under a fresh, independently-modeled
-        // clone (initClonedTree -- the same helper runBranchLengthCompare/
-        // maybeRunFindopt use for exactly this "score a scratch topology
-        // without disturbing anything else" need). Fits BOTH branch
-        // lengths AND the model's own rate/frequency parameters
-        // (ModelFactory::optimizeParameters, not a plain
-        // optimizeAllBranches()) -- an earlier version of this function
-        // only fit branch lengths, which left GTR+FO's rates/frequencies
-        // at their arbitrary un-fit starting values for every candidate,
-        // capping every pool score at roughly JC-level likelihood no
-        // matter how good the topology was. Real IQ-TREE fits its model
-        // ONCE (ModelFinder, before initCandidateTreeSet ever runs) and
-        // reuses that fit across the whole pool rather than refitting it
-        // per candidate; refitting per candidate here is less efficient
-        // but far simpler than threading one shared fitted model across
-        // poolSize independent PhyloTree/ModelFactory instances, and
-        // poolSize defaults small enough (20, vs. real IQ-TREE's ~100)
-        // that the extra cost stays reasonable. For a plain JC run (no
-        // free rate/frequency parameters to fit) this reduces to the same
-        // branch-length-only search optimizeAllBranches would have done.
-        PhyloTree candidate;
-        initClonedTree(candidate, fullPrecisionNewick.str(), aln, params, modelName);
-        clampAllBranchLengthsForOptimization(candidate, Params::getInstance().min_branch_length);
+    // same temporary lk_safe_scaling window maybeRunFindopt's own scratch
+    // refit uses -- branch-length optimization can legitimately push a
+    // branch length toward an extreme value, which the plain
+    // (non-scaled) kernel isn't built to handle without a fatal numerical
+    // underflow (see reoptimizeSPREdges' comment on runHillClimb for the
+    // same concern elsewhere)
+    bool origSafeScaling = params.lk_safe_scaling;
+    params.lk_safe_scaling = true;
 
-        // same temporary lk_safe_scaling window maybeRunFindopt's own
-        // scratch refit uses -- optimizeParameters' branch-length search
-        // can legitimately push a branch length toward an extreme value,
-        // which the plain (non-scaled) kernel isn't built to handle
-        // without a fatal numerical underflow (see reoptimizeSPREdges'
-        // comment on runHillClimb for the same concern elsewhere)
-        bool origSafeScaling = params.lk_safe_scaling;
-        params.lk_safe_scaling = true;
-        double score = candidate.getModelFactory()->optimizeParameters(BRLEN_OPTIMIZE, false, params.modelEps);
-        params.lk_safe_scaling = origSafeScaling;
+    // candidate #0 both seeds the shared model/rate fit AND is itself the
+    // first scored pool member, exactly like real IQ-TREE fitting its
+    // model on whatever tree computeInitialTree hands it before the
+    // per-candidate loop starts
+    PhyloTree tree;
+    initClonedTree(tree, poolNewicks[0], aln, params, modelName);
+    clampAllBranchLengthsForOptimization(tree, Params::getInstance().min_branch_length);
+    // 10x looser than params.modelEps -- matches real IQ-TREE's own
+    // one-time initial fit (main/phyloanalysis.cpp: initEpsilon =
+    // params.min_iterations == 0 ? params.modelEps : params.modelEps*10,
+    // called via IQTree::ensureModelParametersAreSet before its own
+    // candidate-set loop starts). Real IQ-TREE only takes the tighter,
+    // un-multiplied branch when min_iterations==0, i.e. an explicit "-n 0"
+    // (no tree search at all) run; this tool's own maxSteps is a
+    // different, unrelated knob (governs runHillClimb's OWN SPR loop, not
+    // any NNI iteration count here), so there's no equivalent "-n 0" case
+    // to special-case -- the looser epsilon is what a normal run uses
+    double bestScore = tree.getModelFactory()->optimizeParameters(BRLEN_OPTIMIZE, false, params.modelEps * 10);
+    params.numeric_precision = 15;
+    ostringstream firstPolished;
+    tree.printTree(firstPolished, WT_BR_LEN);
+    params.numeric_precision = savedPrecision;
+    string bestNewick = firstPolished.str();
+
+    for (int i = 1; i < poolSize; i++) {
+        // read_TreeString(..., false) -- not the no-argument
+        // readTreeString() PhyloTree also has -- to match candidate #0's
+        // own initClonedTree call above: readTreeString() auto-detects
+        // rootedness from each candidate's own Newick text and updates
+        // this->rooted in place, but read_TreeString's is_rooted argument
+        // is a local copy that's never written back to this->rooted (see
+        // MTree::read_TreeString, tree/mtree.cpp) -- forcing false every
+        // time here keeps this->rooted permanently false across the whole
+        // loop, exactly as it already implicitly was for candidate #0
+        // (never having been set to anything else since this PhyloTree's
+        // construction). Without this, a candidate whose own Newick text
+        // happens to parse as bifurcating-at-the-root can flip
+        // this->rooted to true, which makes PhyloTree::setRootNode take
+        // its early "already rooted" return instead of re-deriving root
+        // from the alignment's own first sequence name -- leaving root
+        // pointed at a node freeNode() already freed, so the very next
+        // setAlignment()'s findLeafName() traversal starts from a stale
+        // pointer and silently can't reach an entire clade.
+        tree.read_TreeString(poolNewicks[i], false);
+        tree.setAlignment(aln);
+        // full buffer reset, not just clearAllPartialLH(): each pool
+        // candidate is an ENTIRELY different topology (not a local SPR/NNI
+        // move), so the incremental per-edge buffer-reuse bookkeeping
+        // clearAllPartialLH() relies on can't be trusted to still match
+        // reality -- same reasoning as every other resetLikelihoodBuffers()
+        // call site in this file, see its own comment
+        resetLikelihoodBuffers(tree);
+        clampAllBranchLengthsForOptimization(tree, Params::getInstance().min_branch_length);
+        // params.brlen_num_traversal (default 1), not optimizeAllBranches'
+        // own default of 100 -- matches real IQ-TREE's own per-candidate
+        // ranking pass (IQTree::optimizeBranches, tree/iqtree.cpp, called
+        // as optimizeBranches(params->brlen_num_traversal) from
+        // initCandidateTreeSet): candidates only need ONE cheap traversal
+        // to be ranked against each other, not near-convergence -- the
+        // pool's whole point is picking a starting point for runHillClimb's
+        // OWN subsequent search, not delivering a final branch-length fit
+        double score = tree.optimizeAllBranches(params.brlen_num_traversal);
 
         if (score > bestScore) {
             bestScore = score;
             params.numeric_precision = 15;
             ostringstream polishedNewick;
-            candidate.printTree(polishedNewick, WT_BR_LEN);
+            tree.printTree(polishedNewick, WT_BR_LEN);
             params.numeric_precision = savedPrecision;
             bestNewick = polishedNewick.str();
         }
     }
+
+    params.lk_safe_scaling = origSafeScaling;
 
     return bestNewick;
 }
@@ -3659,7 +3761,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         bool randomStart = false, bool useFastSelection = false, bool quiet = false,
         int numCandidates = 1, bool reoptimizeBranchLengths = false, int fullReoptEveryNSteps = 0,
         int fullReoptRounds = 100, bool fullReoptInitialFit = false, bool useGtrModel = false,
-        bool recordProgress = false,
+        bool recordProgress = false, bool recordTopology = false,
         bool investigateFlag = false, int investigateRadius = 1, bool alternateFlag = false,
         bool shrinkFlag = false, int shrinkStallThreshold = 10,
         bool learnradiusFlag = false, int learnradiusN = 20,
@@ -3873,11 +3975,62 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         // no tree file is read here: computeDist + computeBioNJ build the
         // starting tree structure directly from the alignment's own distance
         // matrix, instead of the readTree-then-setAlignment order used by
-        // runLikelihood/runManualSPR
+        // runLikelihood/runManualSPR. This first pass uses cheap,
+        // model-free pairwise distances: PhyloTree::computeDist falls back
+        // to Alignment::computeDist whenever no model/rate is attached yet
+        // (tree/phylotree.cpp, computeDist(seq1,seq2,...)'s own
+        // "if (!model_factory || !site_rate) return initial_dist" guard),
+        // which is unconditionally true here since `tree` has no model at
+        // all yet.
         tree.computeDist(params, aln, tree.dist_matrix, tree.var_matrix);
         tree.computeBioNJ(params);
         // re-map leaf ids to match the alignment's sequence order/names, same
         // as runLikelihood does after reading a tree from file
+        tree.setAlignment(aln);
+
+        // real IQ-TREE's own two-round bootstrap (main/phyloanalysis.cpp:
+        // ensureModelParametersAreSet fits a model on exactly this kind of
+        // cheap-distance BIONJ tree first, then computeMLDist reuses that
+        // fit to compute true ML pairwise distances, then computeBioNJ
+        // runs a SECOND time on the improved matrix -- confirmed by
+        // tracing a real "-t BIONJ" run's own log, which prints
+        // "Constructing BIONJ tree" and "Estimate model parameters" TWICE
+        // each). Without this, this tool's own BIONJ topology stayed stuck
+        // at whatever the cheap distance formula alone could produce --
+        // RF 76 from the true tree on the checked-in sim.treefile/sim.fa,
+        // versus real IQ-TREE's own considerably closer BIONJ topology on
+        // the identical alignment -- since the model-fit block below only
+        // ever touches branch lengths/model parameters on the topology
+        // already fixed above, never the topology itself. This block's own
+        // ModelFactory is deliberately a throwaway: it exists only to make
+        // the SECOND computeDist call below take computeDist's ML-fitting
+        // path instead of its cheap fallback; the common setup further
+        // below discards it and fits a fresh one against the resulting,
+        // better topology -- see the `delete tree.getModelFactory()` just
+        // before that fresh construction
+        ModelsBlock *prelimModelsBlock = readModelsDefinition(params);
+        string prelimModelName = modelName; // ModelFactory's ctor wants string&, not const string&
+        tree.setModelFactory(new ModelFactory(params, prelimModelName, &tree, prelimModelsBlock));
+        delete prelimModelsBlock;
+        tree.setModel(tree.getModelFactory()->model);
+        tree.setRate(tree.getModelFactory()->site_rate);
+        tree.setNumThreads(1);
+        tree.setLikelihoodKernel(LK_SSE2);
+        tree.initializeAllPartialLh();
+        clampAllBranchLengthsForOptimization(tree, Params::getInstance().min_branch_length);
+        bool prelimSafeScaling = params.lk_safe_scaling;
+        params.lk_safe_scaling = true;
+        if (useGtrModel)
+            tree.getModelFactory()->optimizeParameters(BRLEN_OPTIMIZE, false, params.modelEps * 10);
+        else
+            tree.optimizeAllBranches(100);
+        params.lk_safe_scaling = prelimSafeScaling;
+
+        // now that a model/rate is attached, this recomputes true ML
+        // pairwise distances instead of the cheap fallback above (same
+        // function, same internal guard -- see this block's own comment)
+        tree.computeDist(params, aln, tree.dist_matrix, tree.var_matrix);
+        tree.computeBioNJ(params);
         tree.setAlignment(aln);
     }
 
@@ -3887,20 +4040,30 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     buildEdgeRegistry(tree, edgeRegistry);
 
     tree.setNumThreads(1);
-    if (reoptimizeBranchLengths || iqtreeStart)
+    if (reoptimizeBranchLengths || !randomStart)
         // real Newton-Raphson branch-length search (see scoreTrialSPRMove)
         // can legitimately push a branch length toward an extreme value
         // while searching, which the plain (non-scaled) SSE kernel isn't
         // built to handle without numerical underflow in the likelihood
         // derivative -- exactly the scenario IQ-TREE's own "-safe" option
         // exists for; the naive fixed-length scoring path never searches
-        // branch lengths at all, so it doesn't need this. iqtreeStart
-        // needs it too now, since it also triggers the up-front full fit
-        // below (see that condition's own comment)
+        // branch lengths at all, so it doesn't need this. Both iqtreeStart
+        // and the plain BioNJ default need it too, since both now trigger
+        // the up-front full fit below (see that condition's own comment)
+        // -- only randomStart still skips it, since it's the only path
+        // that doesn't
         params.lk_safe_scaling = true;
     tree.setLikelihoodKernel(LK_SSE2);
 
-    // modelName was already computed above, before the starting-tree branch
+    // modelName was already computed above, before the starting-tree branch.
+    // delete first: the plain-BioNJ branch above may have left a throwaway
+    // preliminary ModelFactory attached to `tree` (used only to make its
+    // own second computeDist call ML-fit pairwise distances -- see that
+    // branch's own comment); setModelFactory is a plain pointer
+    // reassignment with no ownership transfer of whatever it's
+    // overwriting, so skipping this would leak it. A no-op for the other
+    // two starting-tree branches, which never attach a model this early
+    delete tree.getModelFactory();
     ModelsBlock *modelsBlock = readModelsDefinition(params);
     tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
     delete modelsBlock;
@@ -3909,7 +4072,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     tree.initializeAllPartialLh();
 
     double curScore;
-    if (reoptimizeBranchLengths || (fullReoptEveryNSteps > 0 && fullReoptInitialFit) || iqtreeStart) {
+    if (reoptimizeBranchLengths || (fullReoptEveryNSteps > 0 && fullReoptInitialFit) || !randomStart) {
         // optimizeAllBranches() needs a model/rate already assigned and
         // valid partial-likelihood buffers (both just set up above by
         // initializeAllPartialLh()), since -- unlike a plain length
@@ -3944,6 +4107,22 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         // never has this problem: it fits its model once via ModelFinder
         // and keeps reusing that SAME live ModelFactory object throughout
         // preprocessing, never round-tripping through Newick in between).
+        //
+        // The plain BioNJ default (!randomStart, no other flag given)
+        // needs it for the identical reason: real IQ-TREE's own "-t BIONJ"
+        // path always fits the model on the BioNJ tree before its search
+        // ever starts (IQTree::ensureModelParametersAreSet, called from
+        // main/phyloanalysis.cpp before doTreeSearch) -- skipping that
+        // step here left this tool's own default starting logL
+        // catastrophically far from the true tree's (tens of thousands of
+        // log-lik units, not the ~100-unit gap a real, unfit-model-free
+        // BioNJ start should show), since GTR+FO's un-fit rate/frequency
+        // parameters dominate the score far more than the raw BioNJ
+        // branch lengths' own imprecision does. NOT extended to
+        // randomStart: that path has no distance-based lengths to trust
+        // or distrust in the first place (generateRandomTree assigns
+        // arbitrary lengths outright), and fixing it is a separate,
+        // unasked-for change
         clampAllBranchLengthsForOptimization(tree, Params::getInstance().min_branch_length);
         if (useGtrModel)
             // GTR+FO's rate ratios and frequencies start at arbitrary
@@ -4056,7 +4235,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     long candidatesEvaluated = 0;
     if (recordProgress)
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart, curScore,
-                trueTreeLogl);
+                trueTreeLogl, recordTopology, tree);
 
     // "investigate": persists across loop iterations (unlike everything
     // else declared inside the loop body) -- investigateNext is whether
@@ -4431,7 +4610,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             }
             if (recordProgress)
                 appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart,
-                        curScore, trueTreeLogl);
+                        curScore, trueTreeLogl, recordTopology, tree);
         } else {
             rollbackSPRTracked(tree, edgeRegistry, bestTracked);
             if (recomputedAppliedTopology) {
@@ -4447,9 +4626,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         }
 
         maybeRunPeriodicFullReopt(tree, step, fullReoptEveryNSteps, fullReoptRounds, useGtrModel, quiet,
-                recordProgress, modelName, recordTag, runId, candidatesEvaluated, cpuClockStart, trueTreeLogl,
-                curScore);
-        maybeRunFindopt(tree, step, findoptEveryNSteps, quiet, recordProgress, modelName, recordTag,
+                recordProgress, recordTopology, modelName, recordTag, runId, candidatesEvaluated, cpuClockStart,
+                trueTreeLogl, curScore);
+        maybeRunFindopt(tree, step, findoptEveryNSteps, quiet, recordProgress, recordTopology, modelName, recordTag,
                 runId, candidatesEvaluated, cpuClockStart, trueTreeLoglForFindopt, curScore, aln, params);
     }
 
@@ -4593,7 +4772,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                 curScore = bestScore;
                 if (recordProgress)
                     appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart,
-                            curScore, trueTreeLogl);
+                            curScore, trueTreeLogl, recordTopology, tree);
             } else {
                 rollbackSPRTracked(tree, edgeRegistry, bestTracked);
                 resetLikelihoodBuffers(tree);
@@ -4615,7 +4794,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // the loop above) each write their own separate row instead.
     if (recordProgress)
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart, curScore,
-                trueTreeLogl);
+                trueTreeLogl, recordTopology, tree);
 
     if (haveSprLocalCache)
         freeSPRLocalLhCache(sprLocalCache);
@@ -5217,7 +5396,7 @@ void printUsage(const char *prog) {
     cerr << "      for protein). Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [recordtopology] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -5325,6 +5504,16 @@ void printUsage(const char *prog) {
     cerr << "                   overwrite) so their trajectories accumulate side by side in the" << endl;
     cerr << "                   same file for later comparison -- see appendRecordRow's and" << endl;
     cerr << "                   buildRecordTag's comments in the source" << endl;
+    cerr << "        recordtopology  requires 'record'. Additionally appends this row's tree" << endl;
+    cerr << "                   TOPOLOGY (no branch lengths) as one more Newick line to a" << endl;
+    cerr << "                   companion file, topology_<model><tag>.nwk (same naming as" << endl;
+    cerr << "                   'record's own CSV, '.nwk' instead of '.csv'), positionally" << endl;
+    cerr << "                   aligned with the CSV's own rows (line N of this file <-> row N" << endl;
+    cerr << "                   of the CSV). Off by default -- plain 'record' alone writes only" << endl;
+    cerr << "                   the CSV, exactly as before this flag existed -- since the extra" << endl;
+    cerr << "                   Newick line costs real time on large trees/long runs and most" << endl;
+    cerr << "                   'record' uses have no need for it. See appendRecordRow's comment" << endl;
+    cerr << "                   in the source" << endl;
     cerr << "        investigate N  the step right after any accepted move re-prunes that SAME" << endl;
     cerr << "                   (node,dad) pair and exhaustively scores every legal regraft" << endl;
     cerr << "                   candidate within N real hops of there (not stepRadius), keeping" << endl;
@@ -5742,7 +5931,7 @@ void printUsage(const char *prog) {
 bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
         bool &quiet, int &numCandidates, bool &reoptimizeBranchLengths,
         int &fullReoptEveryNSteps, int &fullReoptRounds, bool &fullReoptInitialFit, bool &useGtrModel,
-        bool &recordProgress, bool &investigateFlag, int &investigateRadius,
+        bool &recordProgress, bool &recordTopology, bool &investigateFlag, int &investigateRadius,
         bool &alternateFlag, bool &shrinkFlag, int &shrinkStallThreshold,
         bool &learnradiusFlag, int &learnradiusN,
         bool &sweepFlag, int &sweepCount,
@@ -5760,6 +5949,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     fullReoptInitialFit = false;
     useGtrModel = false;
     recordProgress = false;
+    recordTopology = false;
     investigateFlag = false;
     investigateRadius = 1;
     alternateFlag = false;
@@ -5804,6 +5994,8 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
             useGtrModel = true;
         else if (arg == "record" && !recordProgress)
             recordProgress = true;
+        else if (arg == "recordtopology" && !recordTopology)
+            recordTopology = true;
         else if (arg == "alternate" && !alternateFlag)
             alternateFlag = true;
         else if (arg == "sweep" && !sweepFlag) {
@@ -5902,6 +6094,11 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     // well-defined meaning either
     if (shrinkFlag && learnradiusFlag)
         return false;
+    // recordtopology only means anything alongside 'record' -- it adds a
+    // companion Newick dump to 'record's own CSV rows, so it has nothing to
+    // attach to on its own
+    if (recordTopology && !recordProgress)
+        return false;
     return true;
 }
 
@@ -5917,19 +6114,20 @@ int main(int argc, char **argv) {
         return runBranchLengthCompare(argv[2], atoi(argv[3]), atoi(argv[4]));
     if (argc >= 5 && string(argv[1]) == "--hillclimb") {
         bool randomStart, useFastSelection, quiet, reoptimizeBranchLengths, fullReoptInitialFit, useGtrModel;
-        bool recordProgress, investigateFlag, alternateFlag, shrinkFlag, learnradiusFlag, sweepFlag, findoptFlag;
+        bool recordProgress, recordTopology, investigateFlag, alternateFlag, shrinkFlag, learnradiusFlag;
+        bool sweepFlag, findoptFlag;
         bool iqtreeStart, noTrueTree, useDistanceRadius, weightpruneFlag;
         int numCandidates, fullReoptEveryNSteps, fullReoptRounds, investigateRadius;
         int shrinkStallThreshold, learnradiusN, sweepCount, findoptEveryNSteps, iqtreeStartPoolSize;
         if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet, numCandidates,
                 reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds, fullReoptInitialFit, useGtrModel,
-                recordProgress, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
+                recordProgress, recordTopology, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
                 shrinkStallThreshold, learnradiusFlag, learnradiusN, sweepFlag, sweepCount, findoptFlag,
                 findoptEveryNSteps, iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius,
                 weightpruneFlag)) {
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), randomStart, useFastSelection, quiet,
                     numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds,
-                    fullReoptInitialFit, useGtrModel, recordProgress, investigateFlag,
+                    fullReoptInitialFit, useGtrModel, recordProgress, recordTopology, investigateFlag,
                     investigateRadius, alternateFlag,
                     shrinkFlag, shrinkStallThreshold, learnradiusFlag, learnradiusN,
                     sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,

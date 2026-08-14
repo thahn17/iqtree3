@@ -512,6 +512,31 @@ anyone tempted to re-add them.
   "fast" ever completed -- record_JC_fast_massapply.csv (repo root) has
   one informal run's trajectory if anyone wants to revisit it.
 
+  --hillclimb's old "iqtreestart ... real" flag: scored the "iqtreestart"
+  candidate pool with real IQ-TREE's own IQTree::optimizeBranches
+  (tree/iqtree.cpp) instead of this tool's own PhyloTree::optimizeAllBranches,
+  otherwise the same hand-driven pool loop as plain "iqtreestart". Getting
+  there surfaced two real segfaults: params.pll defaults to true whenever
+  this project is built with PLL support, and IQTree::optimizeBranches
+  branches on it, taking a PLL code path against an uninitialized
+  pllInst/pllPartitions this tool never sets up (worked around by forcing
+  params.pll = false); and calling IQTree::initCandidateTreeSet directly
+  (tried first, as a single call replacing the whole pool loop) turned out
+  to also run real NNI moves internally via doNNISearch on the top
+  params.numNNITrees candidates before ever returning, which needs a
+  Checkpoint wired into the model, not just the tree, to avoid crashing --
+  judged out of scope, so the pool loop was kept hand-driven instead,
+  calling only the per-candidate primitives (computeParsimonyTree,
+  optimizeBranches), never initCandidateTreeSet itself. Finding
+  (sim.treefile/sim.fa, pool 20, GTR+FO): fastest of every iqtreestart
+  variant tried (61.2s CPU vs. 73.1s for the plain, tuned pool loop), but
+  worst starting-tree quality of the bunch (logL 134.3 below the true
+  tree's, vs. 35.8 for the tuned loop -- worse even than the very first,
+  unoptimized iqtreestart's 126.3). IQTree::optimizeBranches's own
+  tolerance/step-cap constants (params->loglh_epsilon, PLL_NEWZPERCYCLE)
+  are evidently tuned assuming the doNNISearch polish that always follows
+  it in a real analysis, which this mode deliberately never ran. Removed.
+
 
 Generating input data with AliSim
 ----------------------------------

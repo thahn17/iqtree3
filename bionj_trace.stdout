@@ -1,0 +1,249 @@
+IQ-TREE version 3.1.3 for Windows 64-bit built Aug 13 2026
+Developed by Bui Quang Minh, Thomas Wong, Nhan Ly-Trong, Huaiyan Ren
+Contributed by Lam-Tung Nguyen, Dominik Schrempf, Chris Bielow,
+Olga Chernomor, Michael Woodhams, Diep Thi Hoang, Heiko Schmidt
+
+Host:    LAPTOP-4JF3FUK0 (SSE4.2, 7 GB RAM)
+Command: C:\Users\tinst\Desktop\iqtree3\build\iqtree3.exe -s sim.fa -m GTR -t BIONJ -ninit 1 -v -T 1 --prefix bionj_trace --redo -n 0
+Seed:    356629 (Using SPRNG - Scalable Parallel Random Number Generator)
+
+64 bit Linear Congruential Generator with Prime Addend
+
+ 	seed = 356629, stream_number = 0	parameter = 0
+
+Time:    Fri Aug 14 14:44:21 2026
+Kernel:  SSE2 - 1 threads (16 CPU cores detected)
+
+HINT: Use -nt option to specify number of threads because your CPU has 16 cores!
+HINT: -nt AUTO will automatically determine the best number of threads to use.
+
+Reading alignment file sim.fa ... Fasta format detected
+Reading fasta file: done in 0.013 secs
+Name shortening took 0.000000 seconds.
+Duplicate sequence name check took 0.000000 seconds.
+Sequence Type detection took 0.008000 seconds.
+Alignment most likely contains DNA/RNA sequences
+Constructing alignment: done in 0.013 secs
+Time to read input file was 0.049000 sec.
+Time to count constant sites was 0.000000 sec.
+Alignment has 100 sequences with 10000 columns, 10000 distinct patterns
+9999 parsimony-informative, 1 singleton sites, 0 constant sites
+Alignment state count time was 0.000000 seconds.
+Empirical state frequencies: 0.2986810000 0.2010070000 0.1978970000 0.3024150000 
+      Gap/Ambiguity  Composition  p-value
+Analyzing sequences: done in 0.00100017 secs
+   1  T2      0.00%    passed     66.93%
+   2  T10     0.00%    passed     97.05%
+   3  T51     0.00%    passed     96.87%
+   4  T19     0.00%    passed     82.05%
+   5  T100    0.00%    passed     41.83%
+   6  T38     0.00%    passed     40.08%
+   7  T67     0.00%    passed     73.92%
+   8  T75     0.00%    passed     65.75%
+   9  T12     0.00%    passed     25.98%
+  10  T36     0.00%    passed     30.52%
+  11  T90     0.00%    passed      5.46%
+  12  T76     0.00%    failed      3.58%
+  13  T41     0.00%    passed     74.35%
+  14  T74     0.00%    passed     32.55%
+  15  T60     0.00%    passed     29.85%
+  16  T20     0.00%    passed     77.88%
+  17  T35     0.00%    passed     78.14%
+  18  T18     0.00%    passed     62.52%
+  19  T83     0.00%    passed     63.69%
+  20  T95     0.00%    passed      7.65%
+  21  T42     0.00%    passed     55.88%
+  22  T82     0.00%    passed     82.94%
+  23  T9      0.00%    passed     23.81%
+  24  T17     0.00%    passed     70.06%
+  25  T29     0.00%    passed     58.95%
+  26  T68     0.00%    passed     70.13%
+  27  T94     0.00%    passed     62.83%
+  28  T31     0.00%    passed     41.44%
+  29  T26     0.00%    passed     27.37%
+  30  T30     0.00%    passed      8.53%
+  31  T8      0.00%    passed     38.75%
+  32  T70     0.00%    passed     30.78%
+  33  T93     0.00%    passed     91.85%
+  34  T78     0.00%    passed     24.41%
+  35  T79     0.00%    passed     30.08%
+  36  T3      0.00%    passed     14.31%
+  37  T24     0.00%    passed     21.40%
+  38  T66     0.00%    passed      7.90%
+  39  T45     0.00%    passed     77.17%
+  40  T77     0.00%    passed     15.43%
+  41  T6      0.00%    passed     50.70%
+  42  T22     0.00%    passed      5.26%
+  43  T91     0.00%    passed     13.50%
+  44  T65     0.00%    passed     79.31%
+  45  T98     0.00%    passed     87.83%
+  46  T4      0.00%    passed     91.47%
+  47  T7      0.00%    passed     62.42%
+  48  T54     0.00%    passed     88.97%
+  49  T21     0.00%    passed     41.57%
+  50  T5      0.00%    passed     98.20%
+  51  T59     0.00%    passed     89.90%
+  52  T55     0.00%    passed     16.65%
+  53  T33     0.00%    passed     66.53%
+  54  T37     0.00%    passed     72.70%
+  55  T53     0.00%    passed     68.89%
+  56  T27     0.00%    passed     59.67%
+  57  T14     0.00%    passed     48.82%
+  58  T39     0.00%    passed     79.11%
+  59  T32     0.00%    passed     95.78%
+  60  T46     0.00%    passed     86.98%
+  61  T71     0.00%    passed     43.18%
+  62  T86     0.00%    passed     18.98%
+  63  T58     0.00%    failed      2.69%
+  64  T62     0.00%    passed     27.60%
+  65  T56     0.00%    passed     39.82%
+  66  T44     0.00%    passed     99.23%
+  67  T84     0.00%    passed     93.43%
+  68  T13     0.00%    passed     15.95%
+  69  T73     0.00%    passed     28.55%
+  70  T15     0.00%    passed     78.06%
+  71  T49     0.00%    passed     74.65%
+  72  T61     0.00%    passed     59.90%
+  73  T57     0.00%    passed     84.39%
+  74  T72     0.00%    passed     96.78%
+  75  T52     0.00%    passed     51.08%
+  76  T89     0.00%    passed     81.25%
+  77  T28     0.00%    passed     59.66%
+  78  T63     0.00%    passed     36.01%
+  79  T87     0.00%    passed     54.61%
+  80  T43     0.00%    passed     98.03%
+  81  T96     0.00%    passed     60.76%
+  82  T23     0.00%    passed     38.50%
+  83  T80     0.00%    passed     10.59%
+  84  T92     0.00%    passed      8.78%
+  85  T48     0.00%    passed     18.95%
+  86  T47     0.00%    passed     99.71%
+  87  T34     0.00%    passed     64.93%
+  88  T64     0.00%    passed     76.75%
+  89  T88     0.00%    passed     55.05%
+  90  T40     0.00%    passed     42.76%
+  91  T69     0.00%    passed     47.46%
+  92  T50     0.00%    passed     67.85%
+  93  T25     0.00%    passed     78.01%
+  94  T81     0.00%    passed     75.30%
+  95  T85     0.00%    passed     61.15%
+  96  T97     0.00%    passed     84.28%
+  97  T11     0.00%    passed      6.71%
+  98  T16     0.00%    passed      5.09%
+  99  T1      0.00%    passed     48.53%
+ 100  T99     0.00%    passed     43.88%
+****  TOTAL    0.00%  2 sequences failed composition chi2 test (p-value<5%; df=3)
+Hashing sequences took 0.002 wall-clock seconds
+Checking for duplicate sequences took 0.000 wall-clock seconds
+Checking for duplicate sequences: done in 0.00199986 secs
+Computing Jukes-Cantor distances...
+0.000000s Checking if distances already calculated...
+0.000000s Summarizing...
+0.000000s Summarizing found 10000 sites with variation (and non-zero frequency), and a state range of 3
+0.000000s Maximum possible uncorrected length 1.000000 Denominator 10000.000000
+0.000000s Constructing sequence-major matrix of states at 10000 varying sites for 100 sequences
+0.006000s Determining distance matrix with unknown 18
+Calculating observed distances: done in 0.111 secs using 112.6% CPU
+0.117000s Longest distance was 0.720100
+Distance calculation time: 0.117000 seconds
+Alignment state count time was 0.007000 seconds.
+Empirical state frequencies: 0.2986810000 0.2010070000 0.1978970000 0.3024150000 
+Computing Jukes-Cantor distances...
+0.000000s Checking if distances already calculated...
+0.000000s No work to do
+Distance calculation time: 0.000000 seconds
+Constructing BIONJ tree: done in 0 secs
+Computing BIONJ tree took 0.000000 sec (of wall-clock time) 0.000000 sec (of CPU time)
+Computing BIONJ tree (from in-memory) distance matrix took 0.004 sec.
+Time taken to write distance file: 0.006 seconds 
+Loading tree (from file bionj_trace.bionj) took 0.005 sec.
+Computing initial tree took 0.018 wall-clock seconds
+Alignment state count time was 0.001 seconds.
+Empirical state frequencies: 0.2986810000 0.2010070000 0.1978970000 0.3024150000 
+
+ML-TREE SEARCH START WITH THE FOLLOWING PARAMETERS:
+Model of evolution: GTR+F with counted frequencies (205 free parameters)
+Fixed branch lengths: No
+Phylogenetic likelihood library: No
+Branch length optimization method: Newton
+Number of Newton-Raphson steps in NNI evaluation and branch length optimization: 10 / 10
+SSE instructions: Yes
+
+NOTE: 32 MB RAM (0 GB) is required!
+Estimate model parameters (epsilon = 0.0100000000)
+1. Initial log-likelihood: -720339.4244706914 (took 0.0140001774 wall-clock sec)
+Rate parameters:  A-C: 0.99185  A-G: 1.97954  A-T: 0.49171  C-G: 0.50744  C-T: 1.93227  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+2. Current log-likelihood: -669571.094 (after 1.155 wall-clock sec)
+Rate parameters:  A-C: 0.99049  A-G: 1.98128  A-T: 0.48592  C-G: 0.50526  C-T: 1.93387  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+3. Current log-likelihood: -669460.451 (after 1.475 wall-clock sec)
+Rate parameters:  A-C: 0.98922  A-G: 1.98237  A-T: 0.48755  C-G: 0.50279  C-T: 1.93472  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+4. Current log-likelihood: -669460.177 (after 1.739 wall-clock sec)
+Rate parameters:  A-C: 0.98913  A-G: 1.98294  A-T: 0.48652  C-G: 0.50257  C-T: 1.93519  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+5. Current log-likelihood: -669460.146 (after 1.934 wall-clock sec)
+Rate parameters:  A-C: 0.98905  A-G: 1.98433  A-T: 0.48778  C-G: 0.50189  C-T: 1.93622  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+6. Current log-likelihood: -669460.135 (after 2.115 wall-clock sec)
+Rate parameters:  A-C: 0.98930  A-G: 1.98458  A-T: 0.48687  C-G: 0.50226  C-T: 1.93646  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+7. Current log-likelihood: -669460.111 (after 2.324 wall-clock sec)
+Rate parameters:  A-C: 0.99002  A-G: 1.98542  A-T: 0.48771  C-G: 0.50293  C-T: 1.93724  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+8. Current log-likelihood: -669460.096 (after 2.529 wall-clock sec)
+Rate parameters:  A-C: 0.99005  A-G: 1.98568  A-T: 0.48718  C-G: 0.50293  C-T: 1.93750  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+Optimal log-likelihood: -669460.088
+Parameters optimization took 8 rounds (2.789 sec)
+Best tree printed to bionj_trace.treefile
+Wrote distance file to... bionj_trace.mldist
+Computing ML distances based on estimated model parameters...
+0.076000s Longest distance was 2.925946
+Calculating distance matrix: done in 0.076 secs using 102.8% CPU
+Distance calculation time: 0.084000 seconds
+Computing ML distances took 0.084000 sec (of wall-clock time) 0.078125 sec (of CPU time)
+Constructing BIONJ tree: done in 0.00499988 secs
+Computing BIONJ tree took 0.005000 sec (of wall-clock time) 0.000000 sec (of CPU time)
+Computing BIONJ tree (from in-memory) distance matrix took 0.007 sec.
+Time taken to write distance file: 0.009 seconds 
+Loading tree (from file bionj_trace.bionj) took 0.012 sec.
+Wall-clock time spent creating initial tree was 0.021 seconds
+Estimate model parameters (epsilon = 0.010)
+1. Initial log-likelihood: -658944.847 (took 0.014 wall-clock sec)
+Rate parameters:  A-C: 0.98803  A-G: 1.98805  A-T: 0.48391  C-G: 0.49719  C-T: 1.94690  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+2. Current log-likelihood: -657980.359 (after 0.390 wall-clock sec)
+Rate parameters:  A-C: 0.99750  A-G: 2.00098  A-T: 0.48569  C-G: 0.50660  C-T: 1.95773  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+3. Current log-likelihood: -657977.991 (after 0.884 wall-clock sec)
+Rate parameters:  A-C: 0.99645  A-G: 2.00101  A-T: 0.48741  C-G: 0.50485  C-T: 1.95810  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+4. Current log-likelihood: -657977.871 (after 1.087 wall-clock sec)
+Rate parameters:  A-C: 0.99603  A-G: 2.00108  A-T: 0.48652  C-G: 0.50429  C-T: 1.95842  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+5. Current log-likelihood: -657977.849 (after 1.287 wall-clock sec)
+Rate parameters:  A-C: 0.99577  A-G: 2.00099  A-T: 0.48684  C-G: 0.50392  C-T: 1.95851  G-T: 1.00000
+Base frequencies:  A: 0.299  C: 0.201  G: 0.198  T: 0.302
+Optimal log-likelihood: -657977.844
+Parameters optimization took 5 rounds (1.552 sec)
+Log-likelihood of BIONJ tree: -657977.844
+BEST SCORE FOUND : -657977.844
+Total tree length: 19.937
+
+Total number of iterations: 0
+CPU time used for tree search: 0.000 sec (0h:0m:0s)
+Wall-clock time used for tree search: 0.000 sec (0h:0m:0s)
+Total CPU time used: 4.328 sec (0h:0m:4s)
+Total wall-clock time used: 4.501 sec (0h:0m:4s)
+Best tree printed to bionj_trace.treefile
+
+Analysis results written to: 
+  IQ-TREE report:                bionj_trace.iqtree
+  Maximum-likelihood tree:       bionj_trace.treefile
+  BIONJ tree:                    bionj_trace.bionj
+  Likelihood distances:          bionj_trace.mldist
+  Screen log file:               bionj_trace.log
+
+Date and Time: Fri Aug 14 14:44:26 2026
