@@ -3768,7 +3768,9 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         bool sweepFlag = false, int sweepCount = 10,
         bool findoptFlag = false, int findoptEveryNSteps = 0,
         bool iqtreeStart = false, int iqtreeStartPoolSize = 20, bool noTrueTree = false,
-        bool useDistanceRadius = false, bool weightpruneFlag = false) {
+        bool useDistanceRadius = false, bool weightpruneFlag = false,
+        bool userStartTree = false, const string &startTreePath = "",
+        bool useModelOverride = false, const string &modelOverrideSpec = "") {
     double cpuClockStart = getCPUTime();
     if (findoptFlag && findoptEveryNSteps <= 0)
         findoptEveryNSteps = maxSteps; // "default = total number of steps"
@@ -3971,6 +3973,17 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         string startNewick = buildIQTreeStyleStartTree(aln, params, modelName, iqtreeStartPoolSize);
         tree.read_TreeString(startNewick, false);
         tree.setAlignment(aln);
+    } else if (userStartTree) {
+        // caller-supplied starting tree (path to a Newick file, or a literal
+        // Newick string) -- topology AND branch lengths are trusted exactly
+        // as given, e.g. the final tree of a real iqtree3 NNI search already
+        // run on this same alignment. No BioNJ/random/iqtreestart tree-build
+        // happens on this path, and (see the reoptimizeBranchLengths gate
+        // just below) no up-front full branch-length/model re-fit either --
+        // this is deliberately the "skip the initial tree find entirely"
+        // starting-tree mode
+        readTreeArg(tree, startTreePath);
+        tree.setAlignment(aln);
     } else {
         // no tree file is read here: computeDist + computeBioNJ build the
         // starting tree structure directly from the alignment's own distance
@@ -4065,14 +4078,34 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // two starting-tree branches, which never attach a model this early
     delete tree.getModelFactory();
     ModelsBlock *modelsBlock = readModelsDefinition(params);
-    tree.setModelFactory(new ModelFactory(params, modelName, &tree, modelsBlock));
+    // useModelOverride ('model <spec>') feeds ModelFactory a literal, fully
+    // resolved model string (e.g. "LG+F{0.081,0.055,...}", 20 comma-separated
+    // amino acid frequencies in the same A,R,N,D,C,Q,E,G,H,I,L,K,M,F,P,S,T,W,
+    // Y,V order alignment/alignment.cpp's symbols_protein and IQ-TREE's own
+    // .iqtree report use) INSTEAD of modelName's own short "LG"/"LG+FO" label
+    // -- modelName itself is untouched and keeps naming record/run-id files
+    // (see recordSpreadsheetPath/buildRunId below), only the actual model
+    // ModelFactory builds changes. A fixed "+F{...}" spec like that (as
+    // opposed to "+FO", which would still re-optimize from scratch) means the
+    // tree's model starts, and -- for userStartTree with no further
+    // optimization -- STAYS at exactly those externally supplied values, e.g.
+    // ones a real iqtree3 run already ML-fit on this same alignment, instead
+    // of either this tool's own un-fit "LG+FO" starting parameters or having
+    // to refit them itself with no such external input
+    string modelNameForFactory = useModelOverride ? modelOverrideSpec : modelName;
+    tree.setModelFactory(new ModelFactory(params, modelNameForFactory, &tree, modelsBlock));
     delete modelsBlock;
     tree.setModel(tree.getModelFactory()->model);
     tree.setRate(tree.getModelFactory()->site_rate);
     tree.initializeAllPartialLh();
 
     double curScore;
-    if (reoptimizeBranchLengths || (fullReoptEveryNSteps > 0 && fullReoptInitialFit) || !randomStart) {
+    // userStartTree skips this whole up-front fit unconditionally -- its
+    // whole point is a starting tree whose branch lengths and model are
+    // already trustworthy (e.g. real iqtree3 NNI output), so it's treated
+    // like randomStart here even though it isn't randomStart itself
+    if (!userStartTree
+            && (reoptimizeBranchLengths || (fullReoptEveryNSteps > 0 && fullReoptInitialFit) || !randomStart)) {
         // optimizeAllBranches() needs a model/rate already assigned and
         // valid partial-likelihood buffers (both just set up above by
         // initializeAllPartialLh()), since -- unlike a plain length
@@ -4223,7 +4256,8 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     // that same clock/baseline rather than starting a separate one.
     double startTreeCpuTime = getCPUTime() - cpuClockStart;
 
-    cout << (randomStart ? "random start tree: " : (iqtreeStart ? "iqtree start tree: " : "BioNJ start tree : "))
+    cout << (randomStart ? "random start tree: " : (iqtreeStart ? "iqtree start tree: "
+            : (userStartTree ? "user start tree  : " : "BioNJ start tree : ")))
          << newickOf(tree) << " (logL = " << curScore << ")" << endl;
     cout << "start tree time : " << fixed << setprecision(2) << startTreeCpuTime << " sec (CPU)" << endl;
 
@@ -5396,7 +5430,7 @@ void printUsage(const char *prog) {
     cerr << "      for protein). Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [recordtopology] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [starttree <path>] [model <spec>] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [recordtopology] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -5404,7 +5438,7 @@ void printUsage(const char *prog) {
     cerr << "      rollbackSPR on one tree object, and keep the best if it improves the" << endl;
     cerr << "      likelihood, for up to <max-steps> rounds. Prints the RF distance to the" << endl;
     cerr << "      original AliSim tree and writes both trees + the RF distance to" << endl;
-    cerr << "      output.txt (skipped with 'notree', see below). Sixteen optional trailing" << endl;
+    cerr << "      output.txt (skipped with 'notree', see below). Eighteen optional trailing" << endl;
     cerr << "      flags, in any order:" << endl;
     cerr << "        random     start from a random Yule-Harding topology instead of the" << endl;
     cerr << "                   default BioNJ estimate tree" << endl;
@@ -5622,6 +5656,29 @@ void printUsage(const char *prog) {
     cerr << "                   is excluded from the run's own timing entirely ('pausing the timer'" << endl;
     cerr << "                   around it, both for its own CSV row and every later one)." << endl;
     cerr << "                   EXPERIMENTAL -- see maybeRunFindopt's comment in the source" << endl;
+    cerr << "        starttree <path>  start from this Newick tree (a file path, or a literal" << endl;
+    cerr << "                   Newick string) exactly as given -- topology AND branch lengths" << endl;
+    cerr << "                   are trusted as-is, e.g. the final tree of a real iqtree3 NNI run" << endl;
+    cerr << "                   already done on this same alignment. Skips BioNJ/random/" << endl;
+    cerr << "                   iqtreestart entirely, and (unlike the plain BioNJ default) also" << endl;
+    cerr << "                   skips the up-front full branch-length/model re-fit -- this tree is" << endl;
+    cerr << "                   used exactly as supplied, with no 'initial tree find' of any kind." << endl;
+    cerr << "                   Mutually exclusive with 'random'/'iqtreestart'" << endl;
+    cerr << "        model <spec>  build the tree's ModelFactory from this literal model string" << endl;
+    cerr << "                   (e.g. 'LG+F{0.081,0.055,...}', 20 comma-separated frequencies in" << endl;
+    cerr << "                   the same A,R,N,D,C,Q,E,G,H,I,L,K,M,F,P,S,T,W,Y,V order IQ-TREE's" << endl;
+    cerr << "                   own .iqtree report prints its 'pi(X) = ...' lines in) INSTEAD of" << endl;
+    cerr << "                   this run's own short 'LG'/'LG+FO' label. Doesn't affect that label" << endl;
+    cerr << "                   itself -- record/run-id filenames still go by 'gtr' as usual -- only" << endl;
+    cerr << "                   which actual model gets built. A '+F{...}' spec (fixed values, not" << endl;
+    cerr << "                   '+FO', which would still re-optimize from scratch) is how real" << endl;
+    cerr << "                   ML-fit parameters from an external run -- e.g. iqtree3's own -- can" << endl;
+    cerr << "                   be carried over: combine with 'starttree' and 'notree' so neither" << endl;
+    cerr << "                   the topology/branch-lengths NOR the model get re-derived, e.g.:" << endl;
+    cerr << "                     iqtree3 -s real.fa -m LG+FO --prefix nni_run" << endl;
+    cerr << "                     spr_topology_test --hillclimb real.fa 10 10000 fast quiet notree \\" << endl;
+    cerr << "                         starttree nni_run.treefile model \"LG+F{<20 pi(X) values" << endl;
+    cerr << "                         from nni_run.iqtree, same order>}\" record" << endl;
     cerr << "        notree     no ground-truth tree: <alisim-tree.treefile> is instead a real" << endl;
     cerr << "                   alignment file path directly (any format/sequence type Alignment" << endl;
     cerr << "                   can auto-detect -- FASTA/NEXUS/PHYLIP, DNA/protein; no '.fa'" << endl;
@@ -5936,7 +5993,9 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
         bool &learnradiusFlag, int &learnradiusN,
         bool &sweepFlag, int &sweepCount,
         bool &findoptFlag, int &findoptEveryNSteps, bool &iqtreeStart, int &iqtreeStartPoolSize,
-        bool &noTrueTree, bool &useDistanceRadius, bool &weightpruneFlag) {
+        bool &noTrueTree, bool &useDistanceRadius, bool &weightpruneFlag,
+        bool &userStartTree, string &startTreePath,
+        bool &useModelOverride, string &modelOverrideSpec) {
     randomStart = false;
     iqtreeStart = false;
     iqtreeStartPoolSize = 20;
@@ -5964,6 +6023,10 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     noTrueTree = false;
     useDistanceRadius = false;
     weightpruneFlag = false;
+    userStartTree = false;
+    startTreePath = "";
+    useModelOverride = false;
+    modelOverrideSpec = "";
     for (int i = fromIndex; i < argc; i++) {
         string arg = argv[i];
         if (arg == "random" && !randomStart)
@@ -6074,6 +6137,18 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
                     i++; // consume the numeric argument too
                 }
             }
+        } else if (arg == "starttree" && !userStartTree) {
+            userStartTree = true;
+            if (i + 1 >= argc)
+                return false; // requires a tree-file-or-Newick-string argument
+            startTreePath = argv[i + 1];
+            i++; // consume the path argument too
+        } else if (arg == "model" && !useModelOverride) {
+            useModelOverride = true;
+            if (i + 1 >= argc)
+                return false; // requires a model spec string
+            modelOverrideSpec = argv[i + 1];
+            i++; // consume the spec argument too
         } else if (arg == "notree" && !noTrueTree)
             noTrueTree = true;
         else if (arg == "distradius" && !useDistanceRadius)
@@ -6087,6 +6162,11 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     // replace the tool's plain BioNJ estimate with something else, so
     // giving both at once has no well-defined meaning
     if (randomStart && iqtreeStart)
+        return false;
+    // starttree is a third, mutually exclusive alternative starting-tree
+    // method alongside random/iqtreestart (all three replace the default
+    // BioNJ estimate)
+    if ((randomStart || iqtreeStart) && userStartTree)
         return false;
     // shrink and learnradius are both alternative STEP RADIUS schedules --
     // both replace the fixed <radius> with their own per-step value, via
@@ -6117,6 +6197,10 @@ int main(int argc, char **argv) {
         bool recordProgress, recordTopology, investigateFlag, alternateFlag, shrinkFlag, learnradiusFlag;
         bool sweepFlag, findoptFlag;
         bool iqtreeStart, noTrueTree, useDistanceRadius, weightpruneFlag;
+        bool userStartTree;
+        string startTreePath;
+        bool useModelOverride;
+        string modelOverrideSpec;
         int numCandidates, fullReoptEveryNSteps, fullReoptRounds, investigateRadius;
         int shrinkStallThreshold, learnradiusN, sweepCount, findoptEveryNSteps, iqtreeStartPoolSize;
         if (parseHillClimbFlags(argc, argv, 5, randomStart, useFastSelection, quiet, numCandidates,
@@ -6124,14 +6208,15 @@ int main(int argc, char **argv) {
                 recordProgress, recordTopology, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
                 shrinkStallThreshold, learnradiusFlag, learnradiusN, sweepFlag, sweepCount, findoptFlag,
                 findoptEveryNSteps, iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius,
-                weightpruneFlag)) {
+                weightpruneFlag, userStartTree, startTreePath, useModelOverride, modelOverrideSpec)) {
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), randomStart, useFastSelection, quiet,
                     numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds,
                     fullReoptInitialFit, useGtrModel, recordProgress, recordTopology, investigateFlag,
                     investigateRadius, alternateFlag,
                     shrinkFlag, shrinkStallThreshold, learnradiusFlag, learnradiusN,
                     sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
-                    iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius, weightpruneFlag);
+                    iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius, weightpruneFlag,
+                    userStartTree, startTreePath, useModelOverride, modelOverrideSpec);
         }
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")

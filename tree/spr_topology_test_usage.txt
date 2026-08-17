@@ -123,7 +123,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]
+    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [starttree <path>] [model <spec>] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]
 
     First, generate a ground-truth tree and a DNA alignment simulated
     along it with the full iqtree3 binary's built-in AliSim feature (a
@@ -177,8 +177,9 @@ Tree argument convention (used by every command that takes a tree):
     branch-length optimization performs broader cache invalidation.
 
     Optional trailing flags, any order (all but random/fast/quiet/gtr/
-    record are EXPERIMENTAL -- informal testing found no measurable
-    accuracy benefit over simpler alternatives, as noted per-flag):
+    record/starttree/model are EXPERIMENTAL -- informal testing found no
+    measurable accuracy benefit over simpler alternatives, as noted
+    per-flag):
 
       random         start from a random Yule-Harding tree instead of BioNJ
       iqtreestart [N] start from N (default 20) independent randomized
@@ -331,6 +332,56 @@ Tree argument convention (used by every command that takes a tree):
                      of replacing the trajectory's final one, and "findopt"
                      is folded into the record filename's tag. Its CPU
                      cost is excluded from the run's own timing
+      starttree <path>  start from this Newick tree (a file path, or a literal
+                     Newick string) exactly as given -- both topology and
+                     branch lengths are trusted as-is, unlike every other
+                     starting-tree option here. Intended for e.g. the final
+                     tree of a real iqtree3 NNI search already run on this
+                     same alignment: skips BioNJ/random/iqtreestart entirely,
+                     AND (unlike the plain BioNJ default) skips the up-front
+                     full branch-length/model re-fit those need too -- with
+                     "starttree", curScore is just tree.computeLikelihood()
+                     on the given tree/model, no optimization of any kind
+                     before the step loop starts. Mutually exclusive with
+                     "random"/"iqtreestart" (three different ways to build
+                     the SAME thing -- a starting tree -- so only one can be
+                     given). Pairs naturally with "notree" (see below) to
+                     search a real alignment starting from a real analysis's
+                     own tree instead of this tool's own BioNJ estimate --
+                     e.g.:
+                       build/iqtree3 -s real.fa -st AA -m LG --prefix nni_run
+                       build/spr_topology_test --hillclimb real.fa 10 10000 \
+                           fast quiet notree starttree nni_run.treefile record
+                     Plain "LG" here has no free parameters, so this already
+                     matches nni_run's own model exactly with nothing further
+                     to carry over. Fitting under "LG+FO" (ML-estimated amino
+                     acid frequencies) instead needs "model" too -- see below
+      model <spec>   build the tree's ModelFactory from this literal model
+                     string (e.g. "LG+F{0.081,0.055,...}", 20 comma-separated
+                     frequencies in the same A,R,N,D,C,Q,E,G,H,I,L,K,M,F,P,S,
+                     T,W,Y,V order IQ-TREE's own .iqtree report prints its
+                     "pi(X) = ..." lines in -- see alignment/alignment.cpp's
+                     symbols_protein) INSTEAD of this run's own short
+                     "LG"/"LG+FO" label. Doesn't affect that label itself --
+                     record/run-id filenames still go by "gtr" as usual, see
+                     buildRunId/recordSpreadsheetPath -- only which actual
+                     model gets built. A "+F{...}" spec (fixed values, not
+                     "+FO", which would still re-optimize from scratch) is
+                     how real ML-fit parameters from an external run -- e.g.
+                     iqtree3's own -m LG+FO -- get carried over rather than
+                     either this tool's own un-fit "LG+FO" starting values or
+                     having to refit them itself with no such external input.
+                     Combine with "starttree"+"notree" so neither the
+                     topology/branch-lengths NOR the model get re-derived:
+                       build/iqtree3 -s real.fa -st AA -m LG+FO --prefix nni_run
+                       (read the 20 "pi(X) = ..." lines under "State
+                       frequencies:" in nni_run.iqtree, same A,R,N,...,V
+                       order, into a comma-separated list)
+                       build/spr_topology_test --hillclimb real.fa 10 10000 \
+                           fast quiet notree starttree nni_run.treefile \
+                           model "LG+F{<those 20 values>}" record
+                     test_scripts/extract_iqtree_model.py automates the
+                     "read nni_run.iqtree, build the spec string" step above
       notree         no ground-truth tree: <alisim-tree.treefile> is instead
                      a real alignment file path DIRECTLY (any file format
                      or sequence type Alignment can auto-detect --
