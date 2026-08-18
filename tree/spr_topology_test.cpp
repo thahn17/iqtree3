@@ -1502,23 +1502,28 @@ void findSPRSiblings(PhyloNode *node1, PhyloNode *dad1, PhyloNode *&sibling1, Ph
 /**
     apply `move` as a trial, score it, and always roll it back (the
     caller decides afterward whether to actually keep it for real, via
-    applySPRTracked). If reoptimizeBranchLengths is set, the three edges
-    an SPR move actually changes -- the two split halves of the target
-    edge at the new attachment point (prune_dad-regraft_dad,
-    prune_dad-regraft_node) and the merged edge left behind at the
-    vacated attachment point (sibling1-sibling2) -- are each re-optimized
-    via optimizeOneBranch() (Newton-Raphson, same as
+    applySPRTracked). If reoptimizeBranchLengths is set, four edges around
+    the move -- the two split halves of the target edge at the new
+    attachment point (prune_dad-regraft_dad, prune_dad-regraft_node), the
+    merged edge left behind at the vacated attachment point
+    (sibling1-sibling2), and the pruned subtree's own upper edge
+    (prune_dad-prune_node, unchanged by applySPR itself -- see its own
+    comment in phylotree.cpp -- but now sitting in a different part of the
+    tree, with different neighbors on prune_dad's other two sides, so its
+    old length is no longer necessarily optimal either) -- are each
+    re-optimized via optimizeOneBranch() (Newton-Raphson, same as
     PhyloTree::getBestNNIForBran does for the branches it touches) before
     the final score is taken, instead of just trusting applySPR's own
-    naive placeholder lengths (half the target edge's length split
-    evenly, and the sum of the two vacated edges' lengths -- see
-    applySPR's own comment in phylotree.cpp). This can only ever improve
-    (or leave unchanged) the likelihood for a given topology, since it's
+    naive placeholder lengths for the first three (half the target edge's
+    length split evenly, and the sum of the two vacated edges' lengths --
+    see applySPR's own comment in phylotree.cpp) and prune_dad-prune_node's
+    own pre-move length for the fourth. This can only ever improve (or
+    leave unchanged) the likelihood for a given topology, since it's
     searching the exact same space optimizeOneBranch always searches, and
     turns the previously-reported score for a topology from "whatever the
-    naive placeholder lengths happen to give" into an actual (locally)
-    likelihood-optimal set of lengths for those three edges -- closer to
-    what a real ML search would report for the same topology.
+    naive placeholder/pre-move lengths happen to give" into an actual
+    (locally) likelihood-optimal set of lengths for those four edges --
+    closer to what a real ML search would report for the same topology.
 
     Deliberately built on the tool's original resetLikelihoodBuffers()
     (full delete+reinit) rather than the selective, incremental
@@ -1571,10 +1576,16 @@ void clampAllBranchLengthsForOptimization(PhyloTree &tree, double minLen) {
 }
 
 /**
-    re-optimize (Newton-Raphson) the 3 edges an SPR move actually changes
-    -- prune_dad-regraft_dad, prune_dad-regraft_node, and the merged
-    sibling1-sibling2 edge left behind at the vacated attachment point --
-    in place, on whatever tree/topology is CURRENTLY applied when this is
+    re-optimize (Newton-Raphson) the 4 edges around an SPR move --
+    prune_dad-regraft_dad and prune_dad-regraft_node (the two split halves
+    of the target edge at the new attachment point), the merged
+    sibling1-sibling2 edge left behind at the vacated attachment point,
+    and prune_dad-prune_node (the pruned subtree's own upper edge: never
+    touched by applySPR itself, since prune_dad stays adjacent to
+    prune_node throughout the move, but now sitting between a different
+    pair of neighbors on prune_dad's other two sides, so its pre-move
+    length is no longer necessarily the locally optimal one either) -- in
+    place, on whatever tree/topology is CURRENTLY applied when this is
     called. Used both for scoring a trial candidate (scoreTrialSPRMove,
     where the tree is rolled back afterward regardless) and, separately,
     on the real, permanently-kept tree once a candidate has actually won
@@ -1595,7 +1606,7 @@ void clampAllBranchLengthsForOptimization(PhyloTree &tree, double minLen) {
     cout every time, bypassing this tool's own "quiet" flag entirely
     since it's the library's own diagnostic output, not this tool's.
  */
-void reoptimizeSPREdges(PhyloTree &tree, PhyloNode *dad1, PhyloNode *dad2, PhyloNode *node2,
+void reoptimizeSPREdges(PhyloTree &tree, PhyloNode *dad1, PhyloNode *dad2, PhyloNode *node2, PhyloNode *node1,
         PhyloNode *sibling1, PhyloNode *sibling2) {
     const int maxNRStep = 10; // matches NNI_MAX_NR_STEP's default, utils/pllnni.cpp
     double minLen = Params::getInstance().min_branch_length;
@@ -1608,6 +1619,15 @@ void reoptimizeSPREdges(PhyloTree &tree, PhyloNode *dad1, PhyloNode *dad2, Phylo
 
     clampBranchLengthForOptimization(dad1, node2, minLen);
     tree.optimizeOneBranch(dad1, node2, true, maxNRStep);
+
+    // prune_dad-prune_node itself: never destroyed/recreated by applySPR
+    // (dad1 stays adjacent to node1 throughout -- see applySPR's own
+    // comment in phylotree.cpp), so unlike the two edges just above there
+    // is no naive placeholder length to replace here, only a pre-move one
+    // that's no longer necessarily optimal now that dad1's other two
+    // neighbors have changed
+    clampBranchLengthForOptimization(dad1, node1, minLen);
+    tree.optimizeOneBranch(dad1, node1, true, maxNRStep);
 
     clampBranchLengthForOptimization(sibling1, sibling2, minLen);
     tree.optimizeOneBranch(sibling1, sibling2, true, maxNRStep);
@@ -1626,7 +1646,8 @@ double scoreTrialSPRMoveFullReset(PhyloTree &tree, const SPRMove &move, bool reo
     double score = tree.computeLikelihood();
 
     if (reoptimizeBranchLengths) {
-        reoptimizeSPREdges(tree, move.prune_dad, move.regraft_dad, move.regraft_node, sibling1, sibling2);
+        reoptimizeSPREdges(tree, move.prune_dad, move.regraft_dad, move.regraft_node, move.prune_node,
+                sibling1, sibling2);
 
         resetLikelihoodBuffers(tree);
         double reoptScore = tree.computeLikelihood();
@@ -2053,7 +2074,47 @@ void appendRecordRow(const string &modelName, const string &recordTag, const str
 }
 
 /**
-    if fullReoptEveryNSteps is set and this step index is due, run one
+    path for "trajectory"'s own topology dump -- one file per runHillClimb
+    call, named off runId (already filename-safe: buildRunId only ever
+    emits alphanumerics, '_', and '-') rather than off (modelName,
+    recordTag) the way topologySpreadsheetPath is. recordTag deliberately
+    groups MULTIPLE runs of the same search mode into one shared file (see
+    buildRecordTag's comment) -- fine for topologySpreadsheetPath, since
+    its lines stay positionally aligned with record's own per-run-tagged
+    CSV rows, but "trajectory" has no such CSV to align against and no
+    per-line run marker of its own, so sharing one file across runs would
+    make it impossible to tell, after the fact, where one run's trajectory
+    ends and the next one's begins. Keying off runId's own per-run
+    timestamp instead keeps every run's trajectory in its own file.
+ */
+string trajectoryTopologyPath(const string &runId) {
+    return "trajectory_" + runId + ".nwk";
+}
+
+/**
+    "trajectory": append the current tree's topology (no branch lengths,
+    same WT_SORT_TAXA convention as appendRecordRow's own topology dump --
+    see its comment for why branch lengths are pointless here) as one more
+    Newick line to this run's own trajectory_<run-id>.nwk. Called exactly
+    twice per event worth recording: once right after the starting tree is
+    built (before the step loop, capturing the post-initial-tree topology),
+    and once more after every ACCEPTED step (the `if (improved)` branch in
+    runHillClimb's main loop) -- never on a reverted step, and never from
+    maybeRunPeriodicFullReopt/maybeRunFindopt, since neither of those ever
+    changes the topology, only branch lengths and/or model parameters.
+    Independent of "record"/"recordtopology": unlike recordTopology, which
+    only ever adds a companion column to record's own CSV rows, this flag
+    stands on its own and writes even when "record" was never given.
+ */
+void appendTrajectoryTopology(const string &runId, PhyloTree &tree) {
+    stringstream topologyLine;
+    tree.printTree(topologyLine, WT_SORT_TAXA);
+    ofstream out(trajectoryTopologyPath(runId).c_str(), ios::app);
+    out << topologyLine.str() << endl;
+}
+
+/**
+    if fullReoptEveryNSteps is set and this SUCCESSFUL-step count is due, run one
     full-tree ML refit on the CURRENT tree -- branch lengths only
     (tree.optimizeAllBranches(fullReoptRounds)), or jointly with the
     model's own rate/frequency parameters
@@ -2064,14 +2125,18 @@ void appendRecordRow(const string &modelName, const string &recordTag, const str
     ceiling, but ModelFactory::optimizeParameters has no equivalent
     parameter of its own, converging by epsilon instead regardless. See
     fullReoptEveryNSteps' and useGtrModel's comments on runHillClimb for
-    why. Called once per step in runHillClimb's main loop, independent of
-    how that step's own candidate was chosen.
+    why. Called only right after an ACCEPTED (improved) step, once
+    successfulSteps -- the running count of accepted moves so far,
+    including this one -- is itself an exact multiple of
+    fullReoptEveryNSteps; a stretch of rejected candidates between two
+    accepted moves never counts toward that total, so this fires after
+    every Nth SUCCESSFUL move, not every Nth step attempted.
  */
-void maybeRunPeriodicFullReopt(PhyloTree &tree, int step, int fullReoptEveryNSteps, int fullReoptRounds,
+void maybeRunPeriodicFullReopt(PhyloTree &tree, long successfulSteps, int fullReoptEveryNSteps, int fullReoptRounds,
         bool useGtrModel, bool quiet, bool recordProgress, bool recordTopology, const string &modelName,
         const string &recordTag, const string &runId, long candidatesEvaluated, double cpuClockStart,
         double trueTreeLogl, double &curScore) {
-    if (!(fullReoptEveryNSteps > 0 && (step + 1) % fullReoptEveryNSteps == 0))
+    if (!(fullReoptEveryNSteps > 0 && successfulSteps % fullReoptEveryNSteps == 0))
         return;
 
     clampAllBranchLengthsForOptimization(tree, Params::getInstance().min_branch_length);
@@ -3341,18 +3406,21 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     fullReoptEveryNSteps (default 0, disabled) and fullReoptRounds
     (default 100, only meaningful when fullReoptEveryNSteps is actually
     set) together enable a periodic full tree.optimizeAllBranches(
-    fullReoptRounds) sweep every fullReoptEveryNSteps loop iterations (by
-    step index, regardless of whether that particular
-    step's candidate was kept). This is now a fully independent flag from
+    fullReoptRounds) sweep every fullReoptEveryNSteps SUCCESSFUL (accepted)
+    steps -- steps whose candidate was actually kept, not the total number
+    of step attempts, so a stretch of rejected candidates between two
+    accepted moves never counts toward the interval and never delays it
+    (see maybeRunPeriodicFullReopt's own comment for the exact mechanics).
+    This is now a fully independent flag from
     reoptimizeBranchLengths -- it used to only be reachable as "reopt"'s
-    own optional trailing number, sharing reoptimizeBranchLengths' 3-edge
+    own optional trailing number, sharing reoptimizeBranchLengths' 4-edge
     per-move reoptimization automatically; the two are now separate
     concerns that compose freely (either alone, both together, or
     neither), since a periodic whole-tree sweep is useful even without
-    paying for a 3-edge NR search on every single candidate along the way,
+    paying for a 4-edge NR search on every single candidate along the way,
     and vice versa. The idea behind the periodic sweep itself: when
     reoptimizeBranchLengths is ALSO on, its own reoptimizeSPREdges only
-    ever touches the 2-3 edges a given SPR move directly changes, so every
+    ever touches the (up to) 4 edges around a given SPR move, so every
     OTHER edge's length is whatever it was left at by the initial sweep
     (or an earlier periodic sweep) -- stale with respect to however much
     the tree's topology has shifted since then; when
@@ -3361,7 +3429,7 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     full sweep catches that drift at the cost of a whole-tree NR pass
     (roughly 2*(numTaxa-3) edges, several times more expensive than a
     single reoptimizeSPREdges call, since every edge needs re-examining,
-    not just the ones a single move touched) instead of 3 edges.
+    not just the ones a single move touched) instead of 4 edges.
     EXPERIMENTAL -- IQ-TREE's own NNI search loop (IQTree::optimizeNNI,
     iqtree.cpp) calls a full (but single-round-only, my_iterations=1)
     optimizeAllBranches() after every batch of applied NNIs, i.e. N=1 at
@@ -3437,6 +3505,21 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     accumulate side by side for comparison; runs using a meaningfully
     different search mode (fast/reopt/investigate) land in a
     separate, appropriately-tagged file instead of being mixed in.
+
+    trajectoryFlag (default false, the "trajectory" command-line flag) is
+    independent of recordProgress/recordTopology above: it appends the
+    tree's current topology (Newick, no branch lengths) to its own
+    trajectory_<run-id>.nwk exactly twice per event worth recording --
+    once right after the starting tree is built (the post-initial-tree
+    topology, before the step loop's first move) and once more after every
+    ACCEPTED step, never a reverted one and never a periodic
+    fullreopt/findopt refit (neither ever changes the topology). Unlike
+    recordTopology, which only ever adds a companion column to
+    recordProgress' own CSV rows and therefore requires it, trajectoryFlag
+    needs nothing else turned on. See appendTrajectoryTopology's and
+    trajectoryTopologyPath's comments for why it gets its own per-run
+    filename (keyed off runId) rather than sharing one file across runs
+    the way recordProgress/recordTopology do.
 
     investigateFlag (default false) changes what happens the step
     immediately AFTER any accepted move (whether that move came from
@@ -3768,7 +3851,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         bool sweepFlag = false, int sweepCount = 10,
         bool findoptFlag = false, int findoptEveryNSteps = 0,
         bool iqtreeStart = false, int iqtreeStartPoolSize = 20, bool noTrueTree = false,
-        bool useDistanceRadius = false, bool weightpruneFlag = false,
+        bool useDistanceRadius = false, bool weightpruneFlag = false, bool trajectoryFlag = false,
         bool userStartTree = false, const string &startTreePath = "",
         bool useModelOverride = false, const string &modelOverrideSpec = "") {
     double cpuClockStart = getCPUTime();
@@ -3882,13 +3965,14 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
         cout << "weightprune     : prune edge chosen with probability proportional to its own "
                 "branch length instead of uniformly, experimental" << endl;
     if (reoptimizeBranchLengths)
-        cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on each candidate's 3 "
-                "changed edges before scoring, experimental" << endl;
+        cout << "branch lengths  : re-optimized (Newton-Raphson, like NNI) on the 4 edges around "
+                "each candidate (the 3 it changes, plus the pruned subtree's own upper edge) "
+                "before scoring, experimental" << endl;
     if (fullReoptEveryNSteps > 0)
         cout << "full reopt      : whole-tree "
              << (useGtrModel ? "optimizeParameters() (model + branch lengths)"
                              : "optimizeAllBranches(" + to_string(fullReoptRounds) + " round(s))")
-             << " sweep every " << fullReoptEveryNSteps << " step(s)"
+             << " sweep every " << fullReoptEveryNSteps << " successful step(s)"
              << (fullReoptInitialFit ? ", plus one up front on the starting tree" : "")
              << ", experimental" << endl;
     if (useGtrModel)
@@ -4270,6 +4354,25 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     if (recordProgress)
         appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart, curScore,
                 trueTreeLogl, recordTopology, tree);
+    // "trajectory": captures the post-initial-tree topology -- the tree
+    // exactly as it stands right here, after whatever up-front fit
+    // (reopt/fullreopt-init/the plain BioNJ-model fit) already ran above,
+    // but before the step loop's first SPR move -- as this run's first
+    // trajectory_<run-id>.nwk line. See appendTrajectoryTopology's comment.
+    if (trajectoryFlag) {
+        cout << "trajectory      : appending to " << trajectoryTopologyPath(runId)
+             << " (start + every accepted move), experimental" << endl;
+        appendTrajectoryTopology(runId, tree);
+    }
+
+    // "fullreopt"'s own running count of ACCEPTED (improved) steps so far
+    // -- persists across loop iterations like candidatesEvaluated above.
+    // Only ever incremented inside the `if (improved)` branch below, so a
+    // stretch of rejected candidates between two accepted moves never
+    // advances it; see maybeRunPeriodicFullReopt's comment for why
+    // fullReoptEveryNSteps is now measured against this instead of the
+    // loop's own step index.
+    long successfulSteps = 0;
 
     // "investigate": persists across loop iterations (unlike everything
     // else declared inside the loop body) -- investigateNext is whether
@@ -4571,7 +4674,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             // keeps (or are discarded along with everything else below if
             // this candidate turns out not to improve on curScore after all)
             reoptimizeSPREdges(tree, bestMove.prune_dad, bestMove.regraft_dad, bestMove.regraft_node,
-                    bestTracked.sibling1, bestTracked.sibling2);
+                    bestMove.prune_node, bestTracked.sibling1, bestTracked.sibling2);
             resetLikelihoodBuffers(tree);
             double realScore = tree.computeLikelihood();
             if (std::isfinite(realScore))
@@ -4645,6 +4748,23 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
             if (recordProgress)
                 appendRecordRow(modelName, recordTag, runId, candidatesEvaluated, getCPUTime() - cpuClockStart,
                         curScore, trueTreeLogl, recordTopology, tree);
+            // "trajectory": one more Newick line for this just-accepted
+            // move's resulting topology -- see appendTrajectoryTopology's
+            // comment on why only accepted moves (never a periodic
+            // fullreopt/findopt refit, which never touch the topology)
+            // ever add a line here.
+            if (trajectoryFlag)
+                appendTrajectoryTopology(runId, tree);
+            // "fullreopt": counts this accepted move toward
+            // fullReoptEveryNSteps' own successful-step cadence, then
+            // fires the periodic sweep the moment that count crosses the
+            // next multiple -- see maybeRunPeriodicFullReopt's comment for
+            // why this is gated on successfulSteps rather than the loop's
+            // own step index.
+            successfulSteps++;
+            maybeRunPeriodicFullReopt(tree, successfulSteps, fullReoptEveryNSteps, fullReoptRounds, useGtrModel,
+                    quiet, recordProgress, recordTopology, modelName, recordTag, runId, candidatesEvaluated,
+                    cpuClockStart, trueTreeLogl, curScore);
         } else {
             rollbackSPRTracked(tree, edgeRegistry, bestTracked);
             if (recomputedAppliedTopology) {
@@ -4659,9 +4779,13 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
                     learnRadiusFinalNode, pruneDad, learnRadiusWindow, learnradiusN);
         }
 
-        maybeRunPeriodicFullReopt(tree, step, fullReoptEveryNSteps, fullReoptRounds, useGtrModel, quiet,
-                recordProgress, recordTopology, modelName, recordTag, runId, candidatesEvaluated, cpuClockStart,
-                trueTreeLogl, curScore);
+        // maybeRunPeriodicFullReopt is no longer called unconditionally
+        // here -- it now fires from inside the `if (improved)` branch
+        // above, gated on successfulSteps rather than this loop's own step
+        // index; see its own comment for why. findopt stays on the
+        // original per-step-attempt cadence: it's a pure diagnostic that
+        // never touches curScore or the tree, so there's no "successful
+        // step" concept for it to dilute.
         maybeRunFindopt(tree, step, findoptEveryNSteps, quiet, recordProgress, recordTopology, modelName, recordTag,
                 runId, candidatesEvaluated, cpuClockStart, trueTreeLoglForFindopt, curScore, aln, params);
     }
@@ -4787,7 +4911,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
 
             if (reoptimizeBranchLengths) {
                 reoptimizeSPREdges(tree, bestMove.prune_dad, bestMove.regraft_dad, bestMove.regraft_node,
-                        bestTracked.sibling1, bestTracked.sibling2);
+                        bestMove.prune_node, bestTracked.sibling1, bestTracked.sibling2);
                 resetLikelihoodBuffers(tree);
                 double realScore = tree.computeLikelihood();
                 if (std::isfinite(realScore))
@@ -4995,11 +5119,11 @@ void initClonedTree(PhyloTree &t, const string &newickStr, Alignment *aln, Param
 
     C and D are meaningfully more expensive per step than A/B (a full
     optimizeAllBranches() sweep touches every edge in the tree, not just
-    the 3 an SPR move changes), so this command is much slower than a
-    plain "reopt" hill-climb at the same step count. The final summary
+    the 4 reoptimizeSPREdges touches), so this command is much slower than
+    a plain "reopt" hill-climb at the same step count. The final summary
     reports each tree's own average apply+score time per step (excludes
     the prune/graft selection work all four trees pay alike), so the
-    relative cost of naive vs. 3-edge reopt vs. 1 vs. 10 full sweeps is
+    relative cost of naive vs. 4-edge reopt vs. 1 vs. 10 full sweeps is
     visible directly, not just inferred from total wall time.
 
     @return 0 on success, 1 if the trees desynchronize (a bug, should
@@ -5110,7 +5234,7 @@ int runBranchLengthCompare(const string &trueTreeArg, int radius, int maxSteps) 
     cout << "radius           : " << radius << endl;
     cout << "max steps        : " << maxSteps << endl;
     cout << "tree A           : applySPR's own naive placeholder branch lengths every step (default)" << endl;
-    cout << "tree B           : re-optimized (Newton-Raphson) on the 3 changed edges every step" << endl;
+    cout << "tree B           : re-optimized (Newton-Raphson) on the 4 edges around each move every step" << endl;
     cout << "tree C           : re-optimized on EVERY edge, 1 full optimizeAllBranches() sweep every step" << endl;
     cout << "tree D           : re-optimized on EVERY edge, up to 10 full optimizeAllBranches() sweeps every step"
          << endl;
@@ -5134,7 +5258,7 @@ int runBranchLengthCompare(const string &trueTreeArg, int radius, int maxSteps) 
     // the shared prune/graft selection above, which all four trees pay
     // alike) -- reported as a per-step average in the final summary, to
     // show how much C/D's full-tree sweeps actually cost relative to
-    // A/B's naive/3-edge handling
+    // A/B's naive/4-edge handling
     double timeA = 0.0, timeB = 0.0, timeC = 0.0, timeD = 0.0;
     int measuredSteps = 0;
 
@@ -5245,7 +5369,8 @@ int runBranchLengthCompare(const string &trueTreeArg, int radius, int maxSteps) 
         t0 = getCPUTime();
         applySPRTracked(treeB, edgeRegistryB, moveB, trackedB);
         resetLikelihoodBuffers(treeB);
-        reoptimizeSPREdges(treeB, moveB.prune_dad, moveB.regraft_dad, moveB.regraft_node, sibling1B, sibling2B);
+        reoptimizeSPREdges(treeB, moveB.prune_dad, moveB.regraft_dad, moveB.regraft_node, moveB.prune_node,
+                sibling1B, sibling2B);
         resetLikelihoodBuffers(treeB);
         double newLoglB = treeB.computeLikelihood();
         timeB += getCPUTime() - t0;
@@ -5287,7 +5412,7 @@ int runBranchLengthCompare(const string &trueTreeArg, int radius, int maxSteps) 
     cout << endl;
     cout << "=== finished after " << step << " step(s) ===" << endl;
     cout << "final tree A (naive lengths, logL = " << curLoglA << "): " << newickOf(treeA) << endl;
-    cout << "final tree B (3-edge reopt, logL = " << curLoglB << ")" << endl;
+    cout << "final tree B (4-edge reopt, logL = " << curLoglB << ")" << endl;
     cout << "final tree C (1 full sweep/step, logL = " << curLoglC << ")" << endl;
     cout << "final tree D (10 full sweeps/step, logL = " << curLoglD << ")" << endl;
     cout << "per-step data written to branchlength_compare_data.csv" << endl;
@@ -5430,7 +5555,7 @@ void printUsage(const char *prog) {
     cerr << "      for protein). Sequence names in the alignment must match the tree's" << endl;
     cerr << "      leaf names exactly." << endl;
     cerr << endl;
-    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [starttree <path>] [model <spec>] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [recordtopology] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
+    cerr << "  " << prog << " --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [starttree <path>] [model <spec>] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [recordtopology] [trajectory] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]" << endl;
     cerr << "      greedy randomized SPR search: build a BioNJ start tree from the" << endl;
     cerr << "      alignment AliSim simulated from <alisim-tree.treefile> (found by" << endl;
     cerr << "      replacing '.treefile' with '.fa'), then repeatedly prune a random edge," << endl;
@@ -5466,11 +5591,15 @@ void printUsage(const char *prog) {
     cerr << "                   and final summary (final tree, RF distance, time elapsed) are" << endl;
     cerr << "                   printed. With max-steps in the thousands, this also avoids the" << endl;
     cerr << "                   per-line flush stalling on a slow interactive console" << endl;
-    cerr << "        reopt      re-optimize (Newton-Raphson) the 3 edges an SPR move actually" << endl;
-    cerr << "                   changes before scoring a candidate, the same way IQ-TREE's own" << endl;
-    cerr << "                   NNI search re-optimizes the branches it touches -- instead of" << endl;
-    cerr << "                   trusting applySPR's naive placeholder lengths (half the target" << endl;
-    cerr << "                   edge split evenly, the two vacated edges summed). When reopt (or" << endl;
+    cerr << "        reopt      re-optimize (Newton-Raphson) the 4 edges around an SPR move -- the" << endl;
+    cerr << "                   3 it actually changes, plus the pruned subtree's own upper edge" << endl;
+    cerr << "                   (which now sits between a different pair of neighbors, even though" << endl;
+    cerr << "                   applySPR itself never touches it) -- before scoring a candidate," << endl;
+    cerr << "                   the same way IQ-TREE's own NNI search re-optimizes the branches it" << endl;
+    cerr << "                   touches -- instead of trusting applySPR's naive placeholder" << endl;
+    cerr << "                   lengths (half the target edge split evenly, the two vacated edges" << endl;
+    cerr << "                   summed) for the first 3, or that upper edge's own pre-move length" << endl;
+    cerr << "                   for the 4th. When reopt (or" << endl;
     cerr << "                   fullreopt, below) is on, the whole starting tree is also" << endl;
     cerr << "                   ML-optimized once up front (PhyloTree::optimizeAllBranches(), the" << endl;
     cerr << "                   same full-tree sweep IQ-TREE's own search uses on a freshly built" << endl;
@@ -5490,11 +5619,13 @@ void printUsage(const char *prog) {
     cerr << "                   before any SPR moves at all)" << endl;
     cerr << "        fullreopt M N  independent of 'reopt' (it used to only be reachable as" << endl;
     cerr << "                   'reopt's own optional trailing number): run one full" << endl;
-    cerr << "                   optimizeAllBranches(M) sweep over every edge every N steps, on top" << endl;
-    cerr << "                   of whatever 'reopt' itself is or isn't doing per candidate. BOTH M" << endl;
-    cerr << "                   (round-count ceiling) and N (step interval) are REQUIRED -- unlike" << endl;
-    cerr << "                   every other numeric flag here, there's no sensible single-number" << endl;
-    cerr << "                   default for 'M rounds every N steps'. (mirrors IQ-TREE's own NNI" << endl;
+    cerr << "                   optimizeAllBranches(M) sweep over every edge every N SUCCESSFUL" << endl;
+    cerr << "                   (accepted) steps -- not every N steps attempted -- on top of" << endl;
+    cerr << "                   whatever 'reopt' itself is or isn't doing per candidate. BOTH M" << endl;
+    cerr << "                   (round-count ceiling) and N (successful-step interval) are" << endl;
+    cerr << "                   REQUIRED -- unlike every other numeric flag here, there's no" << endl;
+    cerr << "                   sensible single-number default for 'M rounds every N successful" << endl;
+    cerr << "                   steps'. (mirrors IQ-TREE's own NNI" << endl;
     cerr << "                   loop, which does a full single-round sweep after every batch of" << endl;
     cerr << "                   applied moves). EXPERIMENTAL, and in informal testing on" << endl;
     cerr << "                   sim.treefile showed no measurable logL/RF improvement over plain" << endl;
@@ -5548,6 +5679,17 @@ void printUsage(const char *prog) {
     cerr << "                   Newick line costs real time on large trees/long runs and most" << endl;
     cerr << "                   'record' uses have no need for it. See appendRecordRow's comment" << endl;
     cerr << "                   in the source" << endl;
+    cerr << "        trajectory  independent of 'record'/'recordtopology' -- needs neither. Writes" << endl;
+    cerr << "                   the tree's topology (no branch lengths) to its own" << endl;
+    cerr << "                   trajectory_<run-id>.nwk, one Newick line right after the starting" << endl;
+    cerr << "                   tree is built (post-initial-tree), then one more after every" << endl;
+    cerr << "                   ACCEPTED step -- never a reverted one, and never a periodic" << endl;
+    cerr << "                   fullreopt/findopt refit (neither ever changes the topology). Each" << endl;
+    cerr << "                   run gets its own file (keyed by run-id) rather than sharing one" << endl;
+    cerr << "                   across runs the way record/recordtopology do, since there is no" << endl;
+    cerr << "                   per-line run marker to tell separate runs' trajectories apart" << endl;
+    cerr << "                   within one file. See appendTrajectoryTopology's comment in the" << endl;
+    cerr << "                   source" << endl;
     cerr << "        investigate N  the step right after any accepted move re-prunes that SAME" << endl;
     cerr << "                   (node,dad) pair and exhaustively scores every legal regraft" << endl;
     cerr << "                   candidate within N real hops of there (not stepRadius), keeping" << endl;
@@ -5720,7 +5862,7 @@ void printUsage(const char *prog) {
     cerr << "      choosePrune()/chooseGraft(), which would desync them). Copy A keeps" << endl;
     cerr << "      applySPR's own naive placeholder branch lengths every move (the default" << endl;
     cerr << "      everywhere else in this tool); copy B re-optimizes (Newton-Raphson) just" << endl;
-    cerr << "      the 3 changed edges after every move; copy C re-optimizes EVERY edge, one" << endl;
+    cerr << "      the 4 edges around every move; copy C re-optimizes EVERY edge, one" << endl;
     cerr << "      full optimizeAllBranches() sweep after every move; copy D does the same" << endl;
     cerr << "      as C but up to 10 full sweeps. Every candidate is accepted unconditionally" << endl;
     cerr << "      on all four copies, so any divergence in their logL trajectories comes" << endl;
@@ -5748,13 +5890,18 @@ void printUsage(const char *prog) {
     cerr << "    " << prog << " --hillclimb sim.treefile 10 20 reopt        (re-optimize branch lengths, experimental)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 10 20 fullreopt 100 5" << endl;
     cerr << "                                                        (full 100-round whole-tree sweep every 5" << endl;
-    cerr << "                                                         steps, independent of 'reopt', experimental)" << endl;
+    cerr << "                                                         SUCCESSFUL steps, independent of 'reopt'," << endl;
+    cerr << "                                                         experimental)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 10 20 fullreopt 100 5 true" << endl;
     cerr << "                                                        (same, plus one up-front whole-tree fit" << endl;
     cerr << "                                                         on the starting tree, experimental)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 10 20 fast reopt gtr record" << endl;
     cerr << "                                                        (append convergence trajectory to" << endl;
     cerr << "                                                         record_GTR_FO_fast_reopt.csv, experimental)" << endl;
+    cerr << "    " << prog << " --hillclimb sim.treefile 10 20 fast trajectory" << endl;
+    cerr << "                                                        (write topology to trajectory_<run-id>.nwk" << endl;
+    cerr << "                                                         at the start and after every accepted move," << endl;
+    cerr << "                                                         independent of 'record', experimental)" << endl;
     cerr << "    " << prog << " --hillclimb sim.treefile 8 20 fast investigate" << endl;
     cerr << "                                                        (refine each accepted move one hop" << endl;
     cerr << "                                                         further next step, experimental)" << endl;
@@ -5789,7 +5936,7 @@ void printUsage(const char *prog) {
     cerr << "                                                        (prune edge chosen proportional to its" << endl;
     cerr << "                                                         own branch length, not uniformly)" << endl;
     cerr << "    " << prog << " --branchlength-compare sim.treefile 6 50" << endl;
-    cerr << "                                                        (naive vs 3-edge-reopt vs full-sweep-x1 vs" << endl;
+    cerr << "                                                        (naive vs 4-edge-reopt vs full-sweep-x1 vs" << endl;
     cerr << "                                                         full-sweep-x10 branch lengths, same moves," << endl;
     cerr << "                                                         experimental, slow -- see command's own doc)" << endl;
     cerr << endl;
@@ -5814,24 +5961,27 @@ void printUsage(const char *prog) {
     "quiet" as its own flag rather than erroring. See numCandidates'
     comment on runHillClimb.
 
-    "reopt" re-optimizes (Newton-Raphson) each candidate's 3 changed edges
+    "reopt" re-optimizes (Newton-Raphson) the 4 edges around each candidate
+    (the 3 it actually changes, plus the pruned subtree's own upper edge)
     before it's scored, the same way IQ-TREE's own NNI search does for the
     branches it touches, instead of trusting applySPR's naive placeholder
-    lengths -- a bare flag, no numeric argument. See scoreTrialSPRMove's
-    comment on runHillClimb.
+    lengths (or that upper edge's own pre-move length) -- a bare flag, no
+    numeric argument. See scoreTrialSPRMove's comment on runHillClimb.
 
     "fullreopt" is a fully independent flag from "reopt" (it used to only
     be reachable as "reopt"'s own optional trailing number): it takes TWO
     required positive integers immediately after it, e.g. "fullreopt 100
     5" -- M (fullReoptRounds, the round-count ceiling passed to
     tree.optimizeAllBranches) and N (fullReoptEveryNSteps, how often, in
-    steps) -- and periodically runs a full tree.optimizeAllBranches(M)
-    sweep every N steps, on top of whatever "reopt" itself is or isn't
-    doing per move. Unlike every other numeric flag in this parser, both
-    numbers are REQUIRED, not optional: there's no sensible default for
-    either half of "M rounds every N steps" the way e.g. "fast" defaults
-    its candidate count to 1. See fullReoptEveryNSteps' comment on
-    runHillClimb.
+    SUCCESSFUL/accepted steps, not total step attempts) -- and periodically
+    runs a full tree.optimizeAllBranches(M) sweep every N accepted steps,
+    on top of whatever "reopt" itself is or isn't doing per move. Unlike
+    every other numeric flag in this parser, both numbers are REQUIRED,
+    not optional: there's no sensible default for either half of "M
+    rounds every N successful steps" the way e.g. "fast" defaults its
+    candidate count to 1. See fullReoptEveryNSteps' comment on runHillClimb
+    and maybeRunPeriodicFullReopt's comment for exactly how the successful-
+    step count is tracked.
 
     "fullreopt M N" may optionally be followed by a THIRD token, the
     literal word "true" (not a number, so it's never confused with a
@@ -5983,6 +6133,14 @@ void printUsage(const char *prog) {
     (fast or exhaustive, distradius or not, learnradius or not) proceeds
     from there, so it composes freely with all of them. See choosePrune's
     own comment for the mechanics.
+
+    "trajectory" is a bare flag, no numeric argument, independent of every
+    other flag here (including "record"/"recordtopology" -- it needs
+    neither): it appends the tree's topology to its own
+    trajectory_<run-id>.nwk right after the starting tree is built, then
+    again after every accepted step, never a reverted one. See
+    trajectoryFlag's comment on runHillClimb and appendTrajectoryTopology's
+    comment for the mechanics.
     @return false if any trailing argument isn't recognized
  */
 bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart, bool &useFastSelection,
@@ -5993,7 +6151,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
         bool &learnradiusFlag, int &learnradiusN,
         bool &sweepFlag, int &sweepCount,
         bool &findoptFlag, int &findoptEveryNSteps, bool &iqtreeStart, int &iqtreeStartPoolSize,
-        bool &noTrueTree, bool &useDistanceRadius, bool &weightpruneFlag,
+        bool &noTrueTree, bool &useDistanceRadius, bool &weightpruneFlag, bool &trajectoryFlag,
         bool &userStartTree, string &startTreePath,
         bool &useModelOverride, string &modelOverrideSpec) {
     randomStart = false;
@@ -6023,6 +6181,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
     noTrueTree = false;
     useDistanceRadius = false;
     weightpruneFlag = false;
+    trajectoryFlag = false;
     userStartTree = false;
     startTreePath = "";
     useModelOverride = false;
@@ -6155,6 +6314,8 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
             useDistanceRadius = true;
         else if (arg == "weightprune" && !weightpruneFlag)
             weightpruneFlag = true;
+        else if (arg == "trajectory" && !trajectoryFlag)
+            trajectoryFlag = true;
         else
             return false;
     }
@@ -6196,7 +6357,7 @@ int main(int argc, char **argv) {
         bool randomStart, useFastSelection, quiet, reoptimizeBranchLengths, fullReoptInitialFit, useGtrModel;
         bool recordProgress, recordTopology, investigateFlag, alternateFlag, shrinkFlag, learnradiusFlag;
         bool sweepFlag, findoptFlag;
-        bool iqtreeStart, noTrueTree, useDistanceRadius, weightpruneFlag;
+        bool iqtreeStart, noTrueTree, useDistanceRadius, weightpruneFlag, trajectoryFlag;
         bool userStartTree;
         string startTreePath;
         bool useModelOverride;
@@ -6208,7 +6369,8 @@ int main(int argc, char **argv) {
                 recordProgress, recordTopology, investigateFlag, investigateRadius, alternateFlag, shrinkFlag,
                 shrinkStallThreshold, learnradiusFlag, learnradiusN, sweepFlag, sweepCount, findoptFlag,
                 findoptEveryNSteps, iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius,
-                weightpruneFlag, userStartTree, startTreePath, useModelOverride, modelOverrideSpec)) {
+                weightpruneFlag, trajectoryFlag, userStartTree, startTreePath, useModelOverride,
+                modelOverrideSpec)) {
             return runHillClimb(argv[2], atoi(argv[3]), atoi(argv[4]), randomStart, useFastSelection, quiet,
                     numCandidates, reoptimizeBranchLengths, fullReoptEveryNSteps, fullReoptRounds,
                     fullReoptInitialFit, useGtrModel, recordProgress, recordTopology, investigateFlag,
@@ -6216,7 +6378,7 @@ int main(int argc, char **argv) {
                     shrinkFlag, shrinkStallThreshold, learnradiusFlag, learnradiusN,
                     sweepFlag, sweepCount, findoptFlag, findoptEveryNSteps,
                     iqtreeStart, iqtreeStartPoolSize, noTrueTree, useDistanceRadius, weightpruneFlag,
-                    userStartTree, startTreePath, useModelOverride, modelOverrideSpec);
+                    trajectoryFlag, userStartTree, startTreePath, useModelOverride, modelOverrideSpec);
         }
     }
     if (argc == 4 && string(argv[1]) == "--likelihood")

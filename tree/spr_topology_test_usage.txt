@@ -123,7 +123,7 @@ Tree argument convention (used by every command that takes a tree):
 
 5) Greedy randomized SPR hill-climbing search
 ------------------------------------------------
-    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [starttree <path>] [model <spec>] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]
+    build/spr_topology_test --hillclimb <alisim-tree.treefile> <radius> <max-steps> [random] [iqtreestart [N]] [starttree <path>] [model <spec>] [fast [N]] [quiet] [reopt] [fullreopt M N] [gtr] [record] [trajectory] [investigate [N]] [alternate] [shrink [N]] [learnradius [N]] [sweep [N]] [findopt [N]] [notree] [distradius] [weightprune]
 
     First, generate a ground-truth tree and a DNA alignment simulated
     along it with the full iqtree3 binary's built-in AliSim feature (a
@@ -197,15 +197,20 @@ Tree argument convention (used by every command that takes a tree):
                      print (timing is CPU-clock, not wall-clock, so this
                      doesn't affect reported time either way -- it just
                      saves the per-line print cost on long runs)
-      reopt          re-optimize (Newton-Raphson) the 3 edges an SPR move
-                     changes before scoring it, instead of applySPR's naive
-                     placeholder lengths; the whole starting tree is also
+      reopt          re-optimize (Newton-Raphson) the 4 edges around an SPR
+                     move (the 3 it actually changes, plus the pruned
+                     subtree's own upper edge, which now sits between a
+                     different pair of neighbors) before scoring it, instead
+                     of applySPR's naive placeholder lengths / that upper
+                     edge's pre-move length; the whole starting tree is also
                      ML-optimized once up front. Noticeably slower/candidate
       fullreopt M N  independent of "reopt": run a full-tree
-                     optimizeAllBranches(M) sweep every N steps on top of
-                     whatever "reopt" is or isn't doing per candidate. Both
-                     M (round-count ceiling) and N (step interval) are
-                     REQUIRED, no default. An optional third token, the
+                     optimizeAllBranches(M) sweep every N SUCCESSFUL
+                     (accepted) steps -- not every N steps attempted -- on
+                     top of whatever "reopt" is or isn't doing per
+                     candidate. Both M (round-count ceiling) and N
+                     (successful-step interval) are REQUIRED, no default.
+                     An optional third token, the
                      literal word "true" (e.g. "fullreopt 100 5 true"),
                      also ML-optimizes the whole starting tree up front.
                      No measurable accuracy benefit found over plain reopt
@@ -222,6 +227,12 @@ Tree argument convention (used by every command that takes a tree):
                      investigate were also given (e.g.
                      record_JC_fast_reopt.csv). Appends across runs --
                      these files are never cleaned up automatically
+      trajectory     independent of "record" -- needs neither. Writes the
+                     tree's topology (no branch lengths) to its own
+                     trajectory_<run-id>.nwk: one line right after the
+                     starting tree is built, then one more after every
+                     accepted step (never a reverted one, never a periodic
+                     fullreopt/findopt refit). Each run gets its own file
       investigate [N] after any accepted move, re-prune the same point and
                      exhaustively search N (default 1) hops out, repeating
                      next step as long as each refinement keeps improving
@@ -485,7 +496,7 @@ Tree argument convention (used by every command that takes a tree):
     differing only in how each move's branch lengths are set:
       A: applySPR's naive placeholder lengths (the default everywhere else
          in this tool absent "reopt")
-      B: re-optimizes (Newton-Raphson) just the 3 edges each move changes
+      B: re-optimizes (Newton-Raphson) just the 4 edges around each move
       C: re-optimizes EVERY edge, one full optimizeAllBranches() sweep/move
       D: same as C, but up to 10 full sweeps per move
     All four start from an identical, fully branch-length-optimized random

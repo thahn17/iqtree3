@@ -4,9 +4,9 @@
 # working-directory defaults
 cd "$SLURM_SUBMIT_DIR" || exit 1
 
-# Sanity check: fail loudly and immediately if a binary isn't there, instead
-# of the job burning its walltime allocation on a "command not found" error
-# buried in the log.
+# Sanity check: fail loudly and immediately if the binary isn't there,
+# instead of the job burning its walltime allocation on a "command not
+# found" error buried in the log.
 if [ ! -x build/spr_topology_test ]; then
     echo "ERROR: build/spr_topology_test not found or not executable." >&2
     echo "Build it first (interactively, not as part of this job) with:" >&2
@@ -14,43 +14,34 @@ if [ ! -x build/spr_topology_test ]; then
     echo "  cmake --build build --target spr_topology_test" >&2
     exit 1
 fi
-if [ ! -x build/iqtree3 ]; then
-    echo "ERROR: build/iqtree3 not found or not executable." >&2
-    echo "Build it first with: cmake --build build --target iqtree3" >&2
-    exit 1
-fi
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "ERROR: python3 not found on PATH (needed for misof_subsample.py)." >&2
-    exit 1
-fi
-
-ALIGNMENT="misofproteinalignment.nex"
-if [ ! -f "$ALIGNMENT" ]; then
-    echo "ERROR: $ALIGNMENT not found in $SLURM_SUBMIT_DIR." >&2
-    exit 1
-fi
-SUBSAMPLE_SCRIPT="test_scripts/misof_subsample.py"
-if [ ! -f "$SUBSAMPLE_SCRIPT" ]; then
-    echo "ERROR: $SUBSAMPLE_SCRIPT not found." >&2
-    exit 1
-fi
 
 # --- adjust these to your actual experiment ---
-TARGET_SITES=10000
 MAX_STEPS=10000
 COMMON_SPR_FLAGS="fast quiet notree record"   # starttree is checked separately below since it takes its own argument
-RADII=(10 1)          # radius=10 pass, then radius=1 pass, on each iqtree-NNI'd partial alignment
-PER_RUN_CAP="2h"      # wall-time cap (via `timeout`) on any single iqtree3-NNI or spr_topology_test
-                       # call, so one stuck pass can't eat the whole job's walltime allocation;
-                       # each partial alignment is only TARGET_SITES bp (unlike the full
-                       # ~595k-bp misofproteinalignment.nex), so this is far smaller than the
-                       # 9h cap the old fixed-alignment version of this script used
-PARTIAL_DIR="misof_partials"          # every random partial alignment is kept here, never deleted
-IQTREE_RUN_DIR="misof_iqtree_runs"    # every iqtree3 NNI run's own output files, same story
-NNI_LOG="misof_iqtree_nni_log.csv"    # one row per iqtree3 NNI run: run_id,partial_alignment,tree_file,logL,timestamp
+RADII=(10 1)          # radius=10 pass, then radius=1 pass, on each already NNI-fit partial alignment
+PER_RUN_CAP="2h"      # wall-time cap (via `timeout`) on any single spr_topology_test call, so one
+                       # stuck pass can't eat the whole job's walltime allocation; each partial
+                       # alignment is far smaller than the full ~595k-bp misofproteinalignment.nex,
+                       # so this is comfortably above what a single pass over one of them should need
+PARTIAL_DIR="misof_partials"          # partial alignments -- NOT written here; this script only
+                                       # consumes whatever the data-generating version of this script
+                                       # (see git history) already left behind
+IQTREE_RUN_DIR="misof_iqtree_runs"    # matching iqtree3 NNI output (incl. .treefile) for each partial
+                                       # above, same naming convention: ${IQTREE_RUN_DIR}/<run_id>.treefile
+SPR_DONE_LOG="misof_spr_done_log.csv" # one run_id per line, appended after that run_id's spr passes
+                                       # (every radius in RADII) finish successfully -- lets a job
+                                       # resubmitted after hitting SLURM's own --time limit pick up
+                                       # where the last one left off instead of re-recording (and
+                                       # duplicating, in record's own CSV) work already done
 # -----------------------------------------------
-mkdir -p "$PARTIAL_DIR" "$IQTREE_RUN_DIR"
-[ -s "$NNI_LOG" ] || echo "run_id,partial_alignment,tree_file,logL,timestamp" >> "$NNI_LOG"
+touch "$SPR_DONE_LOG"
+
+if [ ! -d "$PARTIAL_DIR" ]; then
+    echo "ERROR: $PARTIAL_DIR not found -- run the data-generating version of this script" >&2
+    echo "(see git history for slurm_misof_hillclimb.sh) first to create partial alignments" >&2
+    echo "and their iqtree3 NNI trees for this script to consume." >&2
+    exit 1
+fi
 
 # Sanity check #2: confirm THIS binary's own --hillclimb actually recognizes
 # every flag word this script is about to pass it, before ever entering the
@@ -68,42 +59,6 @@ for flag in $COMMON_SPR_FLAGS starttree; do
         exit 1
     fi
 done
-
-# Runs iqtree3's own NNI search on a partial alignment, records its final
-# logL to $NNI_LOG, and (on success) echoes the path to the resulting
-# .treefile on stdout for the caller to feed into spr_topology_test.
-# Returns non-zero (nothing echoed) if the run failed or its logL/treefile
-# couldn't be found -- the caller is expected to skip this iteration's spr
-# passes rather than abort the whole job over one bad run.
-run_iqtree_nni() {
-    local partial_nex="$1"
-    local run_id="$2"
-    local prefix="${IQTREE_RUN_DIR}/${run_id}"
-
-    if ! timeout "$PER_RUN_CAP" ./build/iqtree3 -s "$partial_nex" -m LG -nstop 100 -T 1 \
-            --prefix "$prefix" --redo >&2; then
-        echo "  -- iqtree3 NNI run failed or hit the ${PER_RUN_CAP} cap (run_id=$run_id); see ${prefix}.log" >&2
-        return 1
-    fi
-
-    local treefile="${prefix}.treefile"
-    if [ ! -f "$treefile" ]; then
-        echo "  -- iqtree3 exited 0 but ${treefile} is missing (run_id=$run_id)" >&2
-        return 1
-    fi
-
-    local logl
-    logl="$(grep -m1 "Log-likelihood of the tree:" "${prefix}.iqtree" \
-        | sed -E 's/.*Log-likelihood of the tree:[[:space:]]*(-?[0-9.]+).*/\1/')"
-    if [ -z "$logl" ]; then
-        echo "  -- could not find logL in ${prefix}.iqtree (run_id=$run_id)" >&2
-        return 1
-    fi
-
-    echo "${run_id},${partial_nex},${treefile},${logl},$(date -Iseconds)" >> "$NNI_LOG"
-    echo "  -- iqtree3 NNI logL=${logl} -- ${treefile}" >&2
-    echo "$treefile"
-}
 
 # One spr_topology_test --hillclimb pass, starting from the already-fit
 # iqtree3 NNI tree/branch-lengths/model (via 'starttree', so no BioNJ/random/
@@ -128,39 +83,57 @@ run_spr() {
         # runHillClimb's final "return 2;") -- this is the NORMAL outcome, not a failure
         echo "  -- radius=$radius exited with status $status"
     fi
+    return 0
 }
 
-# Repeat, until SLURM's own --time kills the job: draw a fresh random
-# TARGET_SITES-bp partial alignment from misofproteinalignment.nex, run
-# iqtree3's own NNI search on it, then feed that NNI run's final tree
-# (topology + branch lengths + model already fit) into spr_topology_test
-# twice -- once at radius=10, once at radius=1 -- each starting from that
-# SAME tree rather than rebuilding its own BioNJ estimate. No explicit stop
-# condition here by design, same as the rest of this codebase's SLURM
-# scripts (see e.g. test_scripts/record_iqtree_nni.sh's own comments).
+# Walk every partial alignment already sitting in $PARTIAL_DIR (sorted, so
+# repeated submissions of this same job process them in the same order),
+# one at a time, running the full RADII sweep of spr passes -- via
+# run_spr's own 'starttree' -- against its matching already-NNI-fit tree.
+# "Matching" here means exactly the naming convention the data-generating
+# version of this script uses: a partial alignment
+# ${PARTIAL_DIR}/<run_id>.nex pairs with the NNI tree
+# ${IQTREE_RUN_DIR}/<run_id>.treefile (run_iqtree_nni's own $prefix there).
+# A partial with no such treefile -- or an empty one -- has no valid
+# matching end topology to start from, so it's skipped (logged, not
+# fatal) rather than aborting the whole job over one bad/incomplete pair.
+# Ends -- no "while true" here -- the moment every partial alignment
+# currently in $PARTIAL_DIR has either been processed or skipped as
+# invalid; re-running new data through this script means re-submitting
+# the job after the data-generating version has produced more of it.
+mapfile -t PARTIALS < <(find "$PARTIAL_DIR" -maxdepth 1 -name '*.nex' | sort)
+if [ "${#PARTIALS[@]}" -eq 0 ]; then
+    echo "ERROR: no partial alignments (*.nex) found in $PARTIAL_DIR" >&2
+    exit 1
+fi
+
 ITER=0
-while true; do
+PROCESSED=0
+for PARTIAL_NEX in "${PARTIALS[@]}"; do
     ITER=$((ITER + 1))
-    RUN_ID="${SLURM_JOB_ID:-local}_$(date +%Y%m%d-%H%M%S)_it$(printf '%04d' "$ITER")"
-    PARTIAL_NEX="${PARTIAL_DIR}/${RUN_ID}.nex"
+    RUN_ID="$(basename "$PARTIAL_NEX" .nex)"
+    TREEFILE="${IQTREE_RUN_DIR}/${RUN_ID}.treefile"
 
     echo "=========================================="
-    echo "=== iteration $ITER (run_id=$RUN_ID) -- $(date) ==="
+    echo "=== entry $ITER/${#PARTIALS[@]} (run_id=$RUN_ID) -- $(date) ==="
     echo "=========================================="
 
-    echo "  -- sampling ${TARGET_SITES} random sites from ${ALIGNMENT} -> ${PARTIAL_NEX}"
-    if ! python3 "$SUBSAMPLE_SCRIPT" "$ALIGNMENT" "$TARGET_SITES" "$PARTIAL_NEX"; then
-        echo "  -- subsampling failed (run_id=$RUN_ID); skipping this iteration" >&2
+    if grep -qxF "$RUN_ID" "$SPR_DONE_LOG"; then
+        echo "  -- $RUN_ID already recorded on an earlier submission of this job; skipping"
         continue
     fi
-
-    TREEFILE="$(run_iqtree_nni "$PARTIAL_NEX" "$RUN_ID")"
-    if [ -z "$TREEFILE" ]; then
-        echo "  -- no usable iqtree3 NNI tree this iteration; skipping the spr passes" >&2
+    if [ ! -s "$TREEFILE" ]; then
+        echo "  -- $RUN_ID has no valid matching end topology ($TREEFILE missing or empty); skipping" >&2
         continue
     fi
 
     for radius in "${RADII[@]}"; do
         run_spr "$radius" "$PARTIAL_NEX" "$TREEFILE"
     done
+    echo "$RUN_ID" >> "$SPR_DONE_LOG"
+    PROCESSED=$((PROCESSED + 1))
 done
+
+echo "=========================================="
+echo "=== done: $PROCESSED/${#PARTIALS[@]} partial alignment(s) processed, none left -- $(date) ==="
+echo "=========================================="
