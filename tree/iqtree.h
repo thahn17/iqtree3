@@ -33,6 +33,7 @@
 #include "node.h"
 #include "candidateset.h"
 #include "utils/pllnni.h"
+#include "sprsearch.h"
 
 typedef std::map< string, double > mapString2Double;
 typedef std::multiset< double, std::less< double > > multiSetDB;
@@ -433,6 +434,71 @@ public:
     virtual pair<int, int> doNNISearch(bool write_info = false);
 
     /**
+     *      @brief Perform one SPR hill-climbing pass on the current tree
+     *      topology -- the --spr-refine alternative to doNNISearch as the
+     *      refinement stage after each perturbation. Runs the same search
+     *      spr_topology_test --hillclimb does, through the shared code in
+     *      tree/sprsearch.h, and re-optimizes model parameters afterwards
+     *      on an improvement exactly as doNNISearch does.
+     *      @return the resulting log-likelihood (also left in curScore)
+     */
+    double doSPRSearch(int blockCap = 20, int patience = 1);
+
+    /**
+     *      --spr-continuous: one long SPR hill-climb from the best
+     *      candidate tree, run INSTEAD of the perturb/refine loop. See
+     *      Params::spr_continuous.
+     *      @return the resulting log-likelihood
+     */
+    double doContinuousSPRStage();
+
+    /**
+     *      The "escape" variant of the continuous stage: hill-climb until
+     *      progress stalls, then kick, try to beat the pre-kick score, and
+     *      ROLL BACK if the attempt fails. Same perturb-then-refine shape
+     *      as IQ-TREE's own loop, but the excursion reverts in place
+     *      instead of restarting from the candidate set.
+     *      @return the resulting log-likelihood
+     */
+    double runEscapingSPRStage();
+
+    /**
+     *      --spr-perturb's kick: apply floor((ntaxa-3) * --perturb) random
+     *      SPR moves to the current tree, the SPR counterpart of
+     *      doRandomNNIs. Nothing is scored or kept -- a perturbation is
+     *      meant to make the tree worse; doTreeSearch's refinement stage
+     *      climbs back.
+     */
+    void doRandomSPRs();
+
+    /**
+     *      Parse Params::refine_spec and set up whatever the chosen
+     *      refinement mode needs (SPRSearchOptions, and the record CSV's
+     *      identity when "record" was asked for). Called once from
+     *      initSettings, so a bad spec is reported before the run's real
+     *      work starts rather than at the first perturbation.
+     */
+    void initRefinement(Params &params);
+
+    /**
+     *      Build the record/trajectory file identity (run id, tag, model
+     *      name) on first use. Split out of initRefinement because the
+     *      files are named after the model, which is neither built nor --
+     *      under ModelFinder -- even chosen by the time initSettings runs.
+     *      Idempotent; a no-op after the first call.
+     */
+    void finalizeRefineIdentity();
+
+    /**
+     *      One --spr-refine/--nni-refine bookkeeping pass, run after each
+     *      completed perturbation+refinement iteration regardless of which
+     *      refiner did the work: appends the "record" row, the
+     *      "trajectory" topology line, and fires the periodic "findopt"
+     *      diagnostic whose cadence counts kicks here rather than steps.
+     */
+    void recordRefineIteration();
+
+    /**
             @brief evaluate all NNIs
             @param  node    evaluate all NNIs of the subtree rooted at node
             @param  dad     a neighbor of \p node which does not belong to the subtree
@@ -557,6 +623,31 @@ public:
      *  information and parameters for the tree search procedure
      */
     SearchInfo searchinfo;
+
+    /**
+     *  --spr-refine/--nni-refine's parsed settings, and the SPR search
+     *  state that has to survive from one refinement pass to the next
+     *  (the learnradius window, the shrink counters, the record CSV's
+     *  identity and running totals -- see tree/sprsearch.h). Both are
+     *  filled in by initRefinement and left at their defaults when
+     *  neither flag was given.
+     */
+    sprsearch::SPRSearchOptions spr_opt;
+    sprsearch::SPRSearchState spr_state;
+
+    /**
+     *  --spr-perturb's own settings (radius/distradius/weightprune). Kept
+     *  separate from spr_opt: the kick and the refinement are independent
+     *  choices and need not share a radius or a prune weighting.
+     */
+    sprsearch::SPRSearchOptions spr_perturb_opt;
+
+    /**
+     *  How many perturbation+refinement iterations have completed. Drives
+     *  "findopt"'s cadence, which counts KICKS here rather than the SPR
+     *  steps it counts in spr_topology_test.
+     */
+    int refine_kick_count;
 
     /**
      *  Vector contains number of NNIs used at each iterations

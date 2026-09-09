@@ -1,0 +1,13 @@
+quantity,count,comment
+split_units,4012,"from universal library"
+request_ports,8024,"two lower arms per split"
+optimized_shared_topology_vars,259308,"split activities + internal Beneš wire activities + switch selectors; boundary wire activities substituted"
+shared_lower_arm_length_selectors,8024,"one per split lower port"
+shared_boundary_taxon_membership_vars,802400,"100 taxa x 8024 request ports"
+shared_total_before_optional_long_membership,1069732,"topology + length + taxon membership"
+optional_shared_long_membership_vars,802400,"only if long-scenario taxon/subtree correlation is retained"
+site_raw_request_vars,32096,"4 x 8024"
+site_long_part_vars,32096,"4 x 8024; lower-arm length perspective"
+site_split_product_vars,16048,"4 x 4012"
+site_core_likelihood_vars,80240,"before q/log interpolation"
+length_site_overhead_ratio_vs_fixed_length_core,0.6667,"32096 / (32096+16048)"

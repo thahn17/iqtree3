@@ -1211,6 +1211,85 @@ if (BUILD_SPR_TOPOLOGY_TEST AND NOT BUILD_LIB)
     target_link_libraries(spr_topology_test ${PLATFORM_LIB} ${STD_LIB} ${THREAD_LIB} ${ATOMIC_LIB})
 endif()
 
+##################################################################
+# standalone quartet topology test executable
+# Samples random 4-taxon quartets from a real alignment and finds each
+# one's highest-likelihood topology, via PhyloTree::computeQuartetLikelihoods
+# (tree/quartet.cpp -- the same engine "--lmap" uses). Same build shape as
+# spr_topology_test just above: its own main(), links everything iqtree3
+# does except the `main` library.
+##################################################################
+option(BUILD_QUARTET_TOPOLOGY_TEST "Build the standalone quartet topology test executable" ON)
+
+if (BUILD_QUARTET_TOPOLOGY_TEST AND NOT BUILD_LIB)
+    add_executable(quartet_topology_test tree/quartet_topology_test.cpp)
+
+    if(Backtrace_FOUND)
+        target_link_libraries(quartet_topology_test ${Backtrace_LIBRARY})
+    endif(Backtrace_FOUND)
+
+    if (USE_BOOSTER)
+        target_link_libraries(quartet_topology_test booster)
+    endif()
+
+    if (NOT IQTREE_FLAGS MATCHES "avx" AND NOT IQTREE_FLAGS MATCHES "fma" AND NOT IQTREE_FLAGS MATCHES "nosse")
+        set_target_properties(quartet_topology_test PROPERTIES COMPILE_FLAGS "${SSE_FLAGS}")
+    endif()
+
+    if (USE_NN OR USE_OLD_NN)
+        target_link_libraries(quartet_topology_test nn)
+    endif()
+
+    if (NOT IQTREE_FLAGS MATCHES "single" AND CLANG AND WIN32)
+        if (BINARY32)
+            target_link_libraries(quartet_topology_test ${PROJECT_SOURCE_DIR}/lib32/libiomp5md.dll)
+        else()
+            target_link_libraries(quartet_topology_test ${PROJECT_SOURCE_DIR}/lib/libiomp5md.dll)
+        endif()
+    endif()
+
+    # see spr_topology_test's own identical --start-group/--end-group
+    # comment just above: same non-DAG static-library link order issue
+    if (GCC OR CLANG)
+        target_link_libraries(quartet_topology_test -Wl,--start-group)
+    endif()
+
+    # `main` is deliberately NOT linked -- see spr_topology_test's own
+    # comment above for why; the same handful of symbols it stubs are
+    # stubbed in tree/quartet_topology_test.cpp instead
+    target_link_libraries(quartet_topology_test pll ncl nclextra utils pda lbfgsb whtest sprng vectorclass model
+        gsl alignment tree simulator terrace yaml-cpp phyloYAML ${TARGET_CMAPLE})
+
+    if (USE_TERRAPHAST)
+        target_link_libraries(quartet_topology_test terracetphast)
+    endif()
+
+    if (USE_LSD2)
+        target_link_libraries(quartet_topology_test lsd2)
+    endif()
+
+    if (NOT IQTREE_FLAGS MATCHES "nosse")
+        target_link_libraries(quartet_topology_test kernelsse)
+    endif()
+
+    if (NOT BINARY32 AND NOT IQTREE_FLAGS MATCHES "novx")
+        target_link_libraries(quartet_topology_test pllavx kernelavx kernelfma)
+        if (IQTREE_FLAGS MATCHES "KNL")
+            target_link_libraries(quartet_topology_test kernelavx512)
+        endif()
+    endif()
+
+    if (GCC OR CLANG)
+        target_link_libraries(quartet_topology_test -Wl,--end-group)
+    endif()
+
+    if ((GCC OR CLANG) AND WIN32)
+        target_link_libraries(quartet_topology_test -static)
+    endif()
+
+    target_link_libraries(quartet_topology_test ${PLATFORM_LIB} ${STD_LIB} ${THREAD_LIB} ${ATOMIC_LIB})
+endif()
+
 # setup the executable name
 ##################################################################
 set_target_properties(iqtree3 PROPERTIES OUTPUT_NAME "iqtree3${EXE_SUFFIX}")

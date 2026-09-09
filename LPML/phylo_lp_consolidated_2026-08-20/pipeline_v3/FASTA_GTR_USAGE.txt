@@ -1,0 +1,36 @@
+Whole alignment, JC69:
+  python phylo_lp_runner.py alignment.fa --out-prefix run_jc --top-k 40
+
+Random sample of at most 500 columns:
+  python phylo_lp_runner.py alignment.fa --out-prefix run_sample --max-columns 500 --seed 17
+
+GTR+F (exchangeabilities AC,AG,AT,CG,CT,GT; +F from selected columns):
+  python phylo_lp_runner.py alignment.fa --out-prefix run_gtr --model gtr+f \
+    --gtr-rates 1.0,2.1,0.7,0.8,1.4,0.9 --top-k 40
+
+Branch-effect LP default:
+  --branch-relaxation auto
+    JC-like model -> legacy one-mode/two-point representation
+    non-JC reversible model -> full-range 3-mode spectral relaxation
+
+  Non-JC spectral tuning:
+    --spectral-support-points 7     # default; >=5, larger=tighter/slower preprocessing
+
+  Diagnostic fallback:
+    --branch-relaxation two-point
+
+Outputs:
+  <prefix>.summary.json
+  <prefix>.timings.json
+  <prefix>.topk.tsv
+  <prefix>.best.tree
+  <prefix>.sampled.fa   (only when sampling actually reduces the alignment)
+
+Final integral-tree branch lengths:
+  Defaults to --branch-min 1e-12, --branch-max auto, and --branch-multistart 4.
+  Auto chooses a model-adaptive saturation length from Q's spectral gap.  The multistart
+  avoids a saturated-gradient failure if a fractional LP branch effect is weakly identified.
+
+Duplicate columns:
+  Identical across-taxon site patterns are stored once and weighted by their multiplicity.
+  The summary JSON reports exact and LP unique-pattern counts.

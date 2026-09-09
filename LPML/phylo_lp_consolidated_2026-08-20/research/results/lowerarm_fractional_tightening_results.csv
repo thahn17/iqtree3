@@ -1,0 +1,11 @@
+taxa,alignment_unique_patterns,model,objective_log_pwl,variables,equalities,inequalities,solve_seconds,notes
+8,5,lower-arm baseline,-46.254938695779,4296,446,5584,0.22,"shared lower-arm lengths; count-only likelihood routing"
+8,5,+ full-wire named-taxon flow,-46.254938695779,7496,2774,14368,2.90,"structural root/taxon certificate; no root partition facets"
+8,5,+ composition-aware root partition,-46.779685810779,7496,2774,14447,12.57,"same taxa partition shared by all sites"
+8,5,+ boundary taxon projection + composition/length-aware root facets,-47.159167973063,4648,906,6467,0.64,"recommended; same tightened objective as full-wire variant in test"
+8,5,+ internal membership shape facets,-47.159167973072,4648,906,8119,5.48,"no objective gain; not recommended by default"
+8,5,+ shared long-scenario taxon membership,-47.159167973065,5000,1270,7523,0.78,"stronger interpretation; no objective gain"
+12,4,lower-arm baseline,-32.058609761258,7363,1041,11650,0.69,"variable lower-arm lengths"
+12,4,+ boundary taxon projection + composition/length-aware root facets,-32.331122347270,8635,1827,13967,21.08,"root taxon sums exactly 1"
+4,3,exact discrete topology+short/long,-20.853740648105,,,,,"15 rooted topologies x 2^6 branch choices"
+4,3,tightened LP chord score,-19.699375035092,2152,203,905,0.07,"log ratio 1.05; max total chord error 0.000893"

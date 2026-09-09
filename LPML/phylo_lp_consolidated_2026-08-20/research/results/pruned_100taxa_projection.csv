@@ -1,0 +1,19 @@
+quantity,count,notes
+shared_topology_length_taxon_variables_before_root_pairs,1069732,from prior 100-taxon projection
+root_pair_variables_max,242550,49 root side sizes 2..50 times C(100,2); can be less only by certified whole-size pruning
+shared_variables_max,1312282,before site root/log and optional anchors
+root_pair_degree_equalities,4900,100 per root size 2..50
+root_pair_link_inequalities_after_a2_exact_prune,712800,48 sizes 3..50 times 3*C(100,2); a=2 links omitted exactly
+flow_k_taxon_packing_rows,9800,k=2..99 times 100 taxa
+equal_split_symmetry_rows_if_arm_models_identical,207,one per equal-flow split unit
+root_contribution_variables_per_unique_site,50,one per root candidate; explicit site q variable eliminated
+log_lambda_variables_per_unique_site_ratio_1p1,291,using current q floor 1e-12
+root_only_variables_per_unique_site_ratio_1p1,341,50 root contribution + 291 log lambdas
+root_only_variables_1000_unique_sites_ratio_1p1,341000,before shared variables
+three_contrast_full_anchor_variables_each,72216,4 request states + 3 long contrasts per 8024 ports + 4 products per 4012 split units
+simulated_random_100x1000_pair_cover_anchors,5,greedy pair cover on uniform random alignment
+simulated_lowvariation_100x1000_pair_cover_anchors,20,5 percent mutated-from-major-base simulation
+worst_singleton_100taxa_pair_cover_anchors,99,constructed columns each singling out one taxon
+projected_total_vars_random5anchors_ratio1p1,2014362,shared 1312282 + root-only 341000 + 5*72216
+projected_total_vars_lowvar20anchors_ratio1p1,3097602,shared 1312282 + root-only 341000 + 20*72216
+projected_total_vars_worst99anchors_ratio1p1,8800666,shared 1312282 + root-only 341000 + 99*72216

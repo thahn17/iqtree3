@@ -1,0 +1,397 @@
+IQ-TREE 3.1.3 built Aug 13 2026
+
+Input file name: misofpartialresults/10040170_20260820-013132_it0006.nex
+User tree file name: misof_full_run/it0006_cand10000.treefile
+Type of analysis: tree reconstruction
+Random seed number: 7830
+
+REFERENCES
+----------
+
+To cite IQ-TREE 3 please use:
+
+Thomas K.F. Wong, Nhan Ly-Trong, Huaiyan Ren, Piyumal Demotte, Hector Banos,
+Andrew J. Roger, Edward Susko, Chris Bielow, Nicola De Maio, Nick Goldman,
+Matthew W. Hahn, Mario dos Reis, Le Sy Vinh, Gavin Huttley, Robert Lanfear, Bui Quang Minh (2026)
+IQ-TREE 3: Phylogenomic Inference Software using Complex Evolutionary Models.
+Molecular Biology and Evolution, msag117.
+https://doi.org/10.1093/molbev/msag117
+
+SEQUENCE ALIGNMENT
+------------------
+
+NOTE: Alignment sequence type is auto-detected. If in doubt, specify it via -st option.
+Input data: 144 sequences with 10000 amino-acid sites
+Number of constant sites: 125 (= 1.25% of all sites)
+Number of invariant (constant or ambiguous constant) sites: 125 (= 1.25% of all sites)
+Number of parsimony informative sites: 7660
+Number of distinct site patterns: 9993
+
+SUBSTITUTION PROCESS
+--------------------
+
+Model of substitution: LG+F+G4
+
+State frequencies: (empirical counts from alignment)
+
+  pi(A) = 0.0459
+  pi(R) = 0.0369
+  pi(N) = 0.1687
+  pi(D) = 0.2166
+  pi(C) = 0.0148
+  pi(Q) = 0.0284
+  pi(E) = 0.0487
+  pi(G) = 0.0359
+  pi(H) = 0.0177
+  pi(I) = 0.0397
+  pi(L) = 0.0682
+  pi(K) = 0.0460
+  pi(M) = 0.0159
+  pi(F) = 0.0287
+  pi(P) = 0.0286
+  pi(S) = 0.0427
+  pi(T) = 0.0363
+  pi(W) = 0.0080
+  pi(Y) = 0.0248
+  pi(V) = 0.0472
+
+Model of rate heterogeneity: Gamma with 4 categories
+Gamma shape alpha: 1.0123
+
+ Category  Relative_rate  Proportion
+  1         0.1394         0.2500
+  2         0.4804         0.2500
+  3         1.0020         0.2500
+  4         2.3782         0.2500
+Relative rates are computed as MEAN of the portion of the Gamma distribution falling in the category.
+
+USER TREE
+---------
+
+Log-likelihood of the tree: -1523029.5120 (s.e. 6811.8691)
+Unconstrained log-likelihood (without tree): -92093.6997
+Number of free parameters (#branches + #model parameters): 305
+Akaike information criterion (AIC) score: 3046669.0239
+Corrected Akaike information criterion (AICc) score: 3046688.2791
+Bayesian information criterion (BIC) score: 3048868.1777
+
+Total tree length (sum of branch lengths): 88.8904
+Sum of internal branch lengths: 16.8802 (18.9899% of tree length)
+
+NOTE: Tree is UNROOTED although outgroup taxon 'ACROMYRMEX_ECHINATIOR' is drawn at root
+
++--ACROMYRMEX_ECHINATIOR
+|
+|                       +--ACYRTOSIPHON_PISUM
+|                 +-----|
+|                 |     +--Essigella_californica
+|              +--|
+|              |  |  +------DAPHNIA_PULEX
+|              |  +--|
+|              |     +----------IXODES_SCAPULARIS
+|           +--|
+|           |  |     +----Liposcelis_bostrychophila
+|           |  |  +--|
+|           |  |  |  +--Menopon_gallinae
+|           |  +--|
+|           |     +--PEDICULUS_HUMANUS
+|        +--|
+|        |  |                          +--ANOPHELES_GAMBIAE
+|        |  |                       +--|
+|        |  |                       |  +---Aedes_AEGYpti
+|        |  |                    +--|
+|        |  |                    |  |  +--DROSOPHILA_MELANOGASTER
+|        |  |                    |  +--|
+|        |  |                    |     |  +--Lipara_lucens
+|        |  |                    |     +--|
+|        |  |                    |        +--Triarthria_setipennis
+|        |  |                 +--|
+|        |  |                 |  |  +--------Bombylius_major
+|        |  |                 |  +--|
+|        |  |                 |     +---Trichocera_fuscata
+|        |  |              +--|
+|        |  |              |  |     +---Boreus_hyemalis
+|        |  |              |  |  +--|
+|        |  |              |  |  |  +---Panorpa_vulgaris
+|        |  |              |  +--|
+|        |  |              |     |  +--Ceratophyllus_gallinae
+|        |  |              |     +--|
+|        |  |              |        +--Ctenocephalides_felis
+|        |  |           +--|
+|        |  |           |  |              +--BOMBYX_MORI
+|        |  |           |  |           +--|
+|        |  |           |  |           |  +--Parides_arcas
+|        |  |           |  |        +--|
+|        |  |           |  |        |  |  +----Polyommatus_icarus
+|        |  |           |  |        |  +--|
+|        |  |           |  |        |     |  +---Yponomeuta_evonymella
+|        |  |           |  |        |     +--|
+|        |  |           |  |        |        +----Zygaena_fausta
+|        |  |           |  |     +--|
+|        |  |           |  |     |  +----Nemophora_deegerella
+|        |  |           |  |  +--|
+|        |  |           |  |  |  |  +--------Eriocrania_subpurpurella
+|        |  |           |  |  |  +--|
+|        |  |           |  |  |     +----Triodia_sylvina
+|        |  |           |  +--|
+|        |  |           |     |  +---Cheumatopsyche_sp
+|        |  |           |     +--|
+|        |  |           |        +----Hydroptilidae_sp
+|        |  |        +--|
+|        |  |        |  |        +-------Aleochara_curtula
+|        |  |        |  |     +--|
+|        |  |        |  |     |  |  +----Meloe_violaceus
+|        |  |        |  |     |  +--|
+|        |  |        |  |     |     +--TRIBOLIUM_CASTANEUM
+|        |  |        |  |  +--|
+|        |  |        |  |  |  |  +-------Gyrinus_marinus
+|        |  |        |  |  |  +--|
+|        |  |        |  |  |     +-----Lepicerus_sp
+|        |  |        |  +--|
+|        |  |        |     |     +--------Conwentzia_psociformis
+|        |  |        |     |  +--|
+|        |  |        |     |  |  |  +---Dichochrysa_prasina
+|        |  |        |     |  |  +--|
+|        |  |        |     |  |     +----Euroleon_nostras
+|        |  |        |     +--|
+|        |  |        |        |     +----Corydalus_cornutus
+|        |  |        |        |  +--|
+|        |  |        |        |  |  +---Osmylus_fulvicephalus
+|        |  |        |        +--|
+|        |  |        |           |  +---Inocellia_crassicornis
+|        |  |        |           +--|
+|        |  |        |              +--Xanthostigma_xanthostigma
+|        |  |     +--|
+|        |  |     |  |                                      +------------Acanthocasuarina_muellerianae
+|        |  |     |  |                                   +--|
+|        |  |     |  |                                   |  +-------Xenophysella_greensladeae
+|        |  |     |  |                                +--|
+|        |  |     |  |                                |  |     +-----Acanthosoma_haemorrhoidale
+|        |  |     |  |                                |  |  +--|
+|        |  |     |  |                                |  |  |  +-----Notostira_elongata
+|        |  |     |  |                                |  +--|
+|        |  |     |  |                                |     |  +-------Ranatra_linearis
+|        |  |     |  |                                |     +--|
+|        |  |     |  |                                |        +--------Velia_caprai
+|        |  |     |  |                             +--|
+|        |  |     |  |                             |  |     +-----------Acerentomon_sp
+|        |  |     |  |                             |  |  +--|
+|        |  |     |  |                             |  |  |  |            +-------Anurida_maritima
+|        |  |     |  |                             |  |  |  |         +--|
+|        |  |     |  |                             |  |  |  |         |  +----Tetrodontophora_bielanensis
+|        |  |     |  |                             |  |  |  |      +--|
+|        |  |     |  |                             |  |  |  |      |  |  +----Pogonognathellus_lon_fla
+|        |  |     |  |                             |  |  |  |      |  +--|
+|        |  |     |  |                             |  |  |  |      |     +-----Sminthurus_vir_nig
+|        |  |     |  |                             |  |  |  |  +---|
+|        |  |     |  |                             |  |  |  |  |   +---------Folsomia_candida
+|        |  |     |  |                             |  |  |  +--|
+|        |  |     |  |                             |  |  |     |  +---------------Lepeophtheirus_salmonis
+|        |  |     |  |                             |  |  |     +--|
+|        |  |     |  |                             |  |  |        +------------------Stylops_melittae
+|        |  |     |  |                             |  +--|
+|        |  |     |  |                             |     |  +----Machilis_hrabei
+|        |  |     |  |                             |     +--|
+|        |  |     |  |                             |        +-----Meinertellus_cundinamarcensis
+|        |  |     |  |                          +--|
+|        |  |     |  |                          |  |                                +----------------Aphis_gossypii
+|        |  |     |  |                          |  |                             +--|
+|        |  |     |  |                          |  |                             |  +------------------Manduca_sexta
+|        |  |     |  |                          |  |                          +--|
+|        |  |     |  |                          |  |                          |  |                                 +---Celuca_puligator
+|        |  |     |  |                          |  |                          |  |                              +--|
+|        |  |     |  |                          |  |                          |  |                              |  +-------Litopenaeus_vannamei
+|        |  |     |  |                          |  |                          |  |                           +--|
+|        |  |     |  |                          |  |                          |  |                           |  |  +--Cypridininae_sp
+|        |  |     |  |                          |  |                          |  |                           |  +--|
+|        |  |     |  |                          |  |                          |  |                           |     +--Sarsinebalia_urgorii
+|        |  |     |  |                          |  |                          |  |                       +---|
+|        |  |     |  |                          |  |                          |  |                       |   +--Speleonectes_tulumensis
+|        |  |     |  |                          |  |                          |  |                    +--|
+|        |  |     |  |                          |  |                          |  |                    |  |  +---------------------Mengenilla_moldrzyki
+|        |  |     |  |                          |  |                          |  |                    |  +--|
+|        |  |     |  |                          |  |                          |  |                    |     +--------Sialis_lutaria
+|        |  |     |  |                          |  |                          |  |                 +--|
+|        |  |     |  |                          |  |                          |  |                 |  |  +----------Glomeris_pustulata
+|        |  |     |  |                          |  |                          |  |                 |  +--|
+|        |  |     |  |                          |  |                          |  |                 |     +---------Symphylella_vulgaris
+|        |  |     |  |                          |  |                          |  |              +--|
+|        |  |     |  |                          |  |                          |  |              |  |  +------------Micropterix_calthella
+|        |  |     |  |                          |  |                          |  |              |  +--|
+|        |  |     |  |                          |  |                          |  |              |     +-----Philopotamus_ludificatus
+|        |  |     |  |                          |  |                          |  |           +--|
+|        |  |     |  |                          |  |                          |  |           |  |  +------Exoneura_robusta
+|        |  |     |  |                          |  |                          |  |           |  +--|
+|        |  |     |  |                          |  |                          |  |           |     +-----Priacma_serrata
+|        |  |     |  |                          |  |                          |  |        +--|
+|        |  |     |  |                          |  |                          |  |        |  +--------Rhagoletis_pomonella
+|        |  |     |  |                          |  |                          |  |     +--|
+|        |  |     |  |                          |  |                          |  |     |  +-----------Tipula_maxima
+|        |  |     |  |                          |  |                          |  |  +--|
+|        |  |     |  |                          |  |                          |  |  |  +----------Phlebotomus_papatasi
+|        |  |     |  |                          |  |                          |  +--|
+|        |  |     |  |                          |  |                          |     |  +------Glossina_morsitans
+|        |  |     |  |                          |  |                          |     +--|
+|        |  |     |  |                          |  |                          |        +---------Sarcophaga_crassipalpis
+|        |  |     |  |                          |  |                       +--|
+|        |  |     |  |                          |  |                       |  |  +----------Carabus_granulatus
+|        |  |     |  |                          |  |                       |  +--|
+|        |  |     |  |                          |  |                       |     +-------------Dendroctonus_ponderosae
+|        |  |     |  |                          |  |                    +--|
+|        |  |     |  |                          |  |                    |  |   +------Platycentropus_radiatus
+|        |  |     |  |                          |  |                    |  +---|
+|        |  |     |  |                          |  |                    |      +---------Rhyacophila_fasciata
+|        |  |     |  |                          |  |                 +--|
+|        |  |     |  |                          |  |                 |  +--------------Campodea_augens
+|        |  |     |  |                          |  |              +--|
+|        |  |     |  |                          |  |              |  |     +-----------Archaeopsylla_erinacei
+|        |  |     |  |                          |  |              |  |  +--|
+|        |  |     |  |                          |  |              |  |  |  +-------Nannochorista_philpotti
+|        |  |     |  |                          |  |              |  +--|
+|        |  |     |  |                          |  |              |     |  +----------Bibio_marci
+|        |  |     |  |                          |  |              |     +--|
+|        |  |     |  |                          |  |              |        +-----------Bittacus_pilicornis
+|        |  |     |  |                          |  |           +--|
+|        |  |     |  |                          |  |           |  +------------Cosmioperla_kuna
+|        |  |     |  |                          |  |        +--|
+|        |  |     |  |                          |  |        |  +---------Calopteryx_splendens
+|        |  |     |  |                          |  |     +--|
+|        |  |     |  |                          |  |     |  +--------Timema_cristinae
+|        |  |     |  |                          |  |  +--|
+|        |  |     |  |                          |  |  |  +--------Perla_marginata
+|        |  |     |  |                          |  +--|
+|        |  |     |  |                          |     +--------Prosarthria_teretrirostris
+|        |  |     |  |                       +--|
+|        |  |     |  |                       |  |     +--Frankliniella_cephalica
+|        |  |     |  |                       |  |  +--|
+|        |  |     |  |                       |  |  |  +--Thrips_palmi
+|        |  |     |  |                       |  +--|
+|        |  |     |  |                       |     +---------Gynaikothrips_ficorum
+|        |  |     |  |                    +--|
+|        |  |     |  |                    |  |        +------Blaberus_atropos
+|        |  |     |  |                    |  |     +--|
+|        |  |     |  |                    |  |     |  +----Mastotermes_darwiniensis
+|        |  |     |  |                    |  |  +--|
+|        |  |     |  |                    |  |  |  |     +----Empusa_pennata
+|        |  |     |  |                    |  |  |  |  +--|
+|        |  |     |  |                    |  |  |  |  |  +--Mantis_religiosa
+|        |  |     |  |                    |  |  |  +--|
+|        |  |     |  |                    |  |  |     +-----Metallyticus_splendidus
+|        |  |     |  |                    |  +--|
+|        |  |     |  |                    |     |  +------Ceuthophilus_sp
+|        |  |     |  |                    |     +--|
+|        |  |     |  |                    |        +------Zorotypus_caudelli
+|        |  |     |  |                 +--|
+|        |  |     |  |                 |  |     +--Aposthonia_japonica
+|        |  |     |  |                 |  |  +--|
+|        |  |     |  |                 |  |  |  +-------Haploembia_palaui
+|        |  |     |  |                 |  +--|
+|        |  |     |  |                 |     |  +--Aretaon_asperrimus
+|        |  |     |  |                 |     +--|
+|        |  |     |  |                 |        +----Peruphasma_schultei
+|        |  |     |  |              +--|
+|        |  |     |  |              |  |     +--Galloisiana_yuasai
+|        |  |     |  |              |  |  +--|
+|        |  |     |  |              |  |  |  +----Grylloblatta_bifratrilecta
+|        |  |     |  |              |  +--|
+|        |  |     |  |              |     +------Tanzaniophasma_sp
+|        |  |     |  |           +--|
+|        |  |     |  |           |  |      +---Apachyus_charteceus
+|        |  |     |  |           |  |  +---|
+|        |  |     |  |           |  |  |   +----Forficula_auricularia
+|        |  |     |  |           |  +--|
+|        |  |     |  |           |     +------Gryllotalpa_sp
+|        |  |     |  |        +--|
+|        |  |     |  |        |  |  +----Stenobothrus_lineatus
+|        |  |     |  |        |  +--|
+|        |  |     |  |        |     +---Tetrix_subulata
+|        |  |     |  |     +--|
+|        |  |     |  |     |  |        +---Atelura_formicaria
+|        |  |     |  |     |  |     +--|
+|        |  |     |  |     |  |     |  +---Thermobia_domestica
+|        |  |     |  |     |  |  +--|
+|        |  |     |  |     |  |  |  +-----Tricholepidion_gertschi
+|        |  |     |  |     |  +--|
+|        |  |     |  |     |     |    +--Cordulegaster_boltonii
+|        |  |     |  |     |     +----|
+|        |  |     |  |     |          +--Epiophlebia_superstes
+|        |  |     |  |  +--|
+|        |  |     |  |  |  |        +-----Baetis_pumilus
+|        |  |     |  |  |  |     +--|
+|        |  |     |  |  |  |     |  |     +-----Ephemera_danica
+|        |  |     |  |  |  |     |  |  +--|
+|        |  |     |  |  |  |     |  |  |  +--Isonychia_bicolor
+|        |  |     |  |  |  |     |  +--|
+|        |  |     |  |  |  |     |     +--Eurylophella_sp
+|        |  |     |  |  |  |  +--|
+|        |  |     |  |  |  |  |  +-------Occasjapyx_japonicus
+|        |  |     |  |  |  +--|
+|        |  |     |  |  |     +----------Ectopsocus_briggsi
+|        |  |     |  +--|
+|        |  |     |     |        +----Bemisia_tabaci
+|        |  |     |     |     +--|
+|        |  |     |     |     |  +--Trialeurodes_vaporariorum
+|        |  |     |     |  +--|
+|        |  |     |     |  |  +--------Planococcus_citri
+|        |  |     |     +--|
+|        |  |     |        |     +----Cercopis_vulnerata
+|        |  |     |        |  +--|
+|        |  |     |        |  |  +----Okanagana_villosa
+|        |  |     |        +--|
+|        |  |     |           +-----Nilaparvata_lugens
+|        |  |  +--|
+|        |  |  |  +------Leuctra_sp
+|        |  +--|
+|        |     |        +--Cryptocercus_wrighti
+|        |     |     +--|
+|        |     |     |  +---Periplaneta_americana
+|        |     |  +--|
+|        |     |  |  +--Prorhinotermes_simplex
+|        |     +--|
+|        |        +--ZOOTERMOPSIS_NEVADENSIS
+|     +--|
+|     |  |        +---Chrysis_viridula
+|     |  |     +--|
+|     |  |     |  +----Cotesia_vestalis
+|     |  |  +--|
+|     |  |  |  +----Orussus_abietinus
+|     |  +--|
+|     |     |  +---Leptopilina_clavipes
+|     |     +--|
+|     |        +--Tenthredo_koehleri
+|  +--|
+|  |  +--NASONIA_VITRIPENNIS
++--|
+|  |  +--APIS_MELLIFERA
+|  +--|
+|     +--Bombus_terrestris
+|
++--Harpegnathos_SALTator
+
+Tree in newick format:
+
+(ACROMYRMEX_ECHINATIOR:0.0904855342,(((((((ACYRTOSIPHON_PISUM:0.0765131239,Essigella_californica:0.2412880702):0.4820661723,(DAPHNIA_PULEX:0.5836404711,IXODES_SCAPULARIS:0.8271376238):0.1219858126):0.0498941408,((Liposcelis_bostrychophila:0.4006005117,Menopon_gallinae:0.2848623622):0.1042619895,PEDICULUS_HUMANUS:0.2176903155):0.2248855146):0.0335995189,(((((((((ANOPHELES_GAMBIAE:0.1867772569,Aedes_AEGYpti:0.3329909620):0.1576569268,(DROSOPHILA_MELANOGASTER:0.2070419678,(Lipara_lucens:0.2596035564,Triarthria_setipennis:0.2876594400):0.1550011754):0.1888423460):0.0553204071,(Bombylius_major:0.6996480682,Trichocera_fuscata:0.3527374489):0.1401048545):0.1709930249,((Boreus_hyemalis:0.3332971940,Panorpa_vulgaris:0.3531918140):0.0878340555,(Ceratophyllus_gallinae:0.2392014492,Ctenocephalides_felis:0.2625844572):0.2128307611):0.1629177443):0.0495884240,(((((BOMBYX_MORI:0.2411613743,Parides_arcas:0.2226261133):0.0503384344,(Polyommatus_icarus:0.3697420717,(Yponomeuta_evonymella:0.2980325729,Zygaena_fausta:0.3928623821):0.0658019723):0.0817228086):0.1025913702,Nemophora_deegerella:0.3879367347):0.0927142400,(Eriocrania_subpurpurella:0.6901197844,Triodia_sylvina:0.4109159739):0.2685579985):0.1660620812,(Cheumatopsyche_sp:0.3266317808,Hydroptilidae_sp:0.4101495275):0.1294802537):0.1788878587):0.0523639159,(((Aleochara_curtula:0.6392241327,(Meloe_violaceus:0.4193452227,TRIBOLIUM_CASTANEUM:0.1670090352):0.1135243797):0.0755106262,(Gyrinus_marinus:0.6583872035,Lepicerus_sp:0.4850161829):0.2097053187):0.0523199004,((Conwentzia_psociformis:0.6995567431,(Dichochrysa_prasina:0.3089644164,Euroleon_nostras:0.3999868100):0.1043442836):0.0536148170,((Corydalus_cornutus:0.3968070374,Osmylus_fulvicephalus:0.3494499171):0.0629242857,(Inocellia_crassicornis:0.3391447901,Xanthostigma_xanthostigma:0.2094429615):0.1940403494):0.0410965200):0.1391795251):0.0582951628):0.0858076599,(((((((((((((Acanthocasuarina_muellerianae:0.9588201174,Xenophysella_greensladeae:0.5954614507):0.1228897358,((Acanthosoma_haemorrhoidale:0.4865973524,Notostira_elongata:0.5081461216):0.1161808560,(Ranatra_linearis:0.6298090280,Velia_caprai:0.6704522155):0.1698204851):0.1417516900):0.1031539907,((Acerentomon_sp:0.8929712957,((((Anurida_maritima:0.6024862936,Tetrodontophora_bielanensis:0.4290822620):0.0904984195,(Pogonognathellus_lon_fla:0.3886992044,Sminthurus_vir_nig:0.4537845239):0.0839088777):0.0885497688,Folsomia_candida:0.7997791023):0.3545820325,(Lepeophtheirus_salmonis:1.2441537544,Stylops_melittae:1.4243325909):0.1394850259):0.0917709053):0.1168595766,(Machilis_hrabei:0.3877790718,Meinertellus_cundinamarcensis:0.4913562484):0.2779518718):0.0613130318):0.0459097494,(((((((((((Aphis_gossypii:1.2545644829,Manduca_sexta:1.4471892576):0.2036179394,(((((((((((Celuca_puligator:0.3170948969,Litopenaeus_vannamei:0.5994011567):0.0903408225,(Cypridininae_sp:0.1474773028,Sarsinebalia_urgorii:0.1245595137):0.1458516974):0.0909192944,Speleonectes_tulumensis:0.2825579599):0.2991798696,(Mengenilla_moldrzyki:1.6273040801,Sialis_lutaria:0.6634910566):0.1388566723):0.1504763940,(Glomeris_pustulata:0.8093882331,Symphylella_vulgaris:0.8049329577):0.1623543502):0.1044057773,(Micropterix_calthella:0.9795484379,Philopotamus_ludificatus:0.4575879398):0.1578114963):0.0531767104,(Exoneura_robusta:0.5666336756,Priacma_serrata:0.5120539578):0.1376195875):0.1080823042,Rhagoletis_pomonella:0.6726093273):0.1657944996,Tipula_maxima:0.9034752036):0.1436424027,Phlebotomus_papatasi:0.8237738126):0.1475770758,(Glossina_morsitans:0.5552700568,Sarcophaga_crassipalpis:0.7375998265):0.2620522102):0.2508081349):0.0778313470,(Carabus_granulatus:0.8174287414,Dendroctonus_ponderosae:1.0330596855):0.1674508268):0.0515589861,(Platycentropus_radiatus:0.5291876358,Rhyacophila_fasciata:0.7695158401):0.3611278543):0.0396839101,Campodea_augens:1.1215001885):0.0915814388,((Archaeopsylla_erinacei:0.8914886009,Nannochorista_philpotti:0.6369613539):0.1860284487,(Bibio_marci:0.8671079838,Bittacus_pilicornis:0.8819907345):0.2165517888):0.0809865066):0.0824565349,Cosmioperla_kuna:0.9796331435):0.0494713031,Calopteryx_splendens:0.7412503118):0.0779219199,Timema_cristinae:0.7273894453):0.0787767017,Perla_marginata:0.7144169720):0.0722499623,Prosarthria_teretrirostris:0.7169698186):0.1046471510):0.0334250030,((Frankliniella_cephalica:0.2347043892,Thrips_palmi:0.2581385052):0.2139838319,Gynaikothrips_ficorum:0.7363524776):0.1913839970):0.0432575452,(((Blaberus_atropos:0.5328594406,Mastotermes_darwiniensis:0.4064784698):0.1771287861,((Empusa_pennata:0.3961399095,Mantis_religiosa:0.2240570701):0.0760877112,Metallyticus_splendidus:0.4423345231):0.1184579106):0.0988535761,(Ceuthophilus_sp:0.5692720665,Zorotypus_caudelli:0.5634204271):0.0722477894):0.0388290062):0.0344975861,((Aposthonia_japonica:0.2468626344,Haploembia_palaui:0.6177376449):0.2656985871,(Aretaon_asperrimus:0.2852246872,Peruphasma_schultei:0.3894870025):0.2491240744):0.1059124395):0.0099558106,((Galloisiana_yuasai:0.2154815927,Grylloblatta_bifratrilecta:0.4256788220):0.2121372977,Tanzaniophasma_sp:0.5570760695):0.1022773046):0.0173324699,((Apachyus_charteceus:0.3666943755,Forficula_auricularia:0.4094606451):0.3147624533,Gryllotalpa_sp:0.5587674412):0.0650679918):0.0302906620,(Stenobothrus_lineatus:0.4377748981,Tetrix_subulata:0.3380268591):0.1611582147):0.0437954177,(((Atelura_formicaria:0.3617655366,Thermobia_domestica:0.3231126416):0.0451644672,Tricholepidion_gertschi:0.5122377914):0.0894036080,(Cordulegaster_boltonii:0.2298714052,Epiophlebia_superstes:0.2347684437):0.3743996954):0.0525995891):0.0331366360,(((Baetis_pumilus:0.4608572619,((Ephemera_danica:0.5039665965,Isonychia_bicolor:0.2825942595):0.1138273645,Eurylophella_sp:0.2688577173):0.0827819298):0.1900640746,Occasjapyx_japonicus:0.6593310329):0.0549183661,Ectopsocus_briggsi:0.8665774850):0.0643456085):0.0255103237,(((Bemisia_tabaci:0.4015963152,Trialeurodes_vaporariorum:0.2892183968):0.2899830498,Planococcus_citri:0.7217933710):0.0838506574,((Cercopis_vulnerata:0.3728017590,Okanagana_villosa:0.3907614156):0.1086906203,Nilaparvata_lugens:0.4564709805):0.0771920024):0.1075882911):0.0578636386):0.0150283860,Leuctra_sp:0.5329888253):0.0474592661,(((Cryptocercus_wrighti:0.1746511770,Periplaneta_americana:0.3489229728):0.0584794130,Prorhinotermes_simplex:0.2389188140):0.0656359913,ZOOTERMOPSIS_NEVADENSIS:0.0814557514):0.1509840417):0.0390983891):0.2379458453,(((Chrysis_viridula:0.3506560298,Cotesia_vestalis:0.4028404238):0.0738486852,Orussus_abietinus:0.3919641649):0.0459415052,(Leptopilina_clavipes:0.3239193362,Tenthredo_koehleri:0.2600127617):0.0486217507):0.0396022637):0.0130571680,NASONIA_VITRIPENNIS:0.2189999358):0.0437134252,(APIS_MELLIFERA:0.0684188846,Bombus_terrestris:0.1354354399):0.0755627774):0.0660469935,Harpegnathos_SALTator:0.1947692498);
+
+ALISIM COMMAND
+--------------
+To simulate an alignment of the same length as the original alignment, using the tree and model parameters estimated from this analysis, you can use the following command:
+
+--alisim simulated_MSA -t misof_full_run/it0006_cand10000_opt.treefile -m "LG+F+G4{1.0123}" --length 10000
+
+To mimic the alignment used to produce this analysis, i.e. simulate an alignment of the same length as the original alignment, using the tree and model parameters estimated from this analysis *and* copying the same gap positions as the original alignment, you can use the following command:
+
+iqtree -s misofpartialresults/10040170_20260820-013132_it0006.nex --alisim mimicked_MSA
+
+To simulate any number of alignments in either of the two commandlines above, use the --num-alignments options, for example mimic 100 alignments you would use the command line:
+
+iqtree -s misofpartialresults/10040170_20260820-013132_it0006.nex --alisim mimicked_MSA --num-alignments 100
+
+For more information on using AliSim, please visit: www.iqtree.org/doc/AliSim
+
+TIME STAMP
+----------
+
+Date and time: Fri Aug 21 12:28:46 2026
+Total CPU time used: 312.391 seconds (0h:5m:12s)
+Total wall-clock time used: 168.993 seconds (0h:2m:48s)
+

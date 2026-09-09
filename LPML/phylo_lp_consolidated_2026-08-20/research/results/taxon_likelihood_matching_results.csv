@@ -1,0 +1,16 @@
+taxa,unique_patterns,method,objective_log_pwl,variables,equalities,inequalities,extra_variables,extra_rows,observed_effect
+8,5,current boundary taxon + root composition/length,-47.159167973063,4648,906,6467,0,0,baseline
+8,5,+ explicit per-taxon flow-k packing,-47.159167973066,4648,906,6515,0,48,no objective change; valid certificate
+8,5,+ multistate composition support at all requests/splits,-47.159167973081,4648,906,12103,0,5636,no objective change
+8,5,+ split-joint composition/length support,-47.159167973068,4648,906,6735,0,268,no objective change
+8,5,+ count-k antichain likelihood packing,-47.159167973063,4648,906,6729,0,262,no objective change
+8,5,+ joint cross-site root support,-47.722195143162,4648,906,6551,0,84,0.563027 log-unit tightening
+8,5,+ shared root taxon-pair moments + quadratic composition facets,-47.722195143162,4732,930,6827,84,360,same tightening without subtree/taxon-subset facet enumeration
+12,4,current boundary taxon + root composition/length,-32.331122347270,8635,1827,13967,0,0,baseline
+12,4,+ explicit joint cross-site root support,-32.620747690367,8635,1827,14141,0,174,0.289625 tightening
+12,4,+ root taxon-pair moments + quadratic composition facets (2 facets),-32.618949619288,8965,1887,15125,330,1158,0.287827 tightening; recovers about 99.4% of joint-root gain
+4,3,exact discrete topology + short/long,-20.853740648105,,,,,,benchmark
+4,3,root taxon-pair moment tightened LP chord score,-19.956203787772,2158,207,954,,,remains above exact benchmark after chord-error correction
+8,5,+ root pair moments only on left sizes {2},-47.402496889125,4676,,,-28 fewer than full root-pair model,,0.243329 tightening
+8,5,+ root pair moments only on left sizes {4},-47.177564407897,4676,,,,,0.018396 tightening
+8,5,+ root pair moments only on left sizes {2,4},-47.722195143163,4704,,,,,full 0.563027 tightening with 56 pair variables instead of 84

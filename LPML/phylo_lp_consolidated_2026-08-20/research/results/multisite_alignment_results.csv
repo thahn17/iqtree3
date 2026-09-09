@@ -1,0 +1,6 @@
+case,columns,unique_patterns,method,vars,eq,ineq,solve_s,physical_logL_upper,exact_shared_logL,log_gap,log_OA_iterations,final_log_OA_max_gap
+3-column,3,3,generic boxes + shared router,3860,2573,4728,3.9186,-5.9635414705,-36.6954392525,30.7318977820,2,2.22e-16
+3-column,3,3,composition-aware component bounds,3860,2573,5388,2.0058,-17.2749185732,-36.6954392525,19.4205206793,2,0
+3-column,3,3,+ split-aware root composition cuts,3860,2573,5384,0.6412,-26.7057079158,-36.6954392525,9.9897313367,2,2.78e-17
+3-column,3,3,+ local 4x4 projection tensor,4652,2573,30884,19.0992,-26.7057079158,-36.6954392525,9.9897313367,2,1.11e-16
+6-column,6,5,split-aware root cuts + count-adaptive scaling,6269,4236,8765,5.7779,-57.9892564653,-76.6856386355,18.6963821701,6,3.40e-05

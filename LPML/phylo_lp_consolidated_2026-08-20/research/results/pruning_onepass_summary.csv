@@ -1,0 +1,14 @@
+case,model,objective,variables,equalities,inequalities,notes
+8_fixed,full_per_column,-47.722195143162395,4732,930,6827,all unique-column internal propagation networks
+8_fixed,pruned_general_exact_root_hull,-47.722195143052716,2547,465,2845,exact first-order root hull + root pair moments; no internal site networks
+8_fixed,pair_cover_hybrid,-47.722195143052716,3339,657,4781,pruned general + 2 pair-cover anchor columns with 3-contrast length propagation
+8_bad_seed5000,full_per_column,-35.23412671928275,4732,930,6752,rare case where old capped root-only was weaker
+8_bad_seed5000,old_root_only_60_facets,-35.231879906248594,2552,470,1849,not robust; weakened by 0.0022468
+8_bad_seed5000,exact_root_hull,-35.234126719285335,2552,470,2469,closes rare gap to numerical precision
+12_random_seed7000,full_per_column,-30.867238932373162,8965,,15055,solve about 19.1 s
+12_random_seed7000,pruned_general_exact_root_hull,-30.867238932379827,4745,1243,6486,solve about 1.8-2.2 s
+16_random_seed8000,pruned_general_exact_root_hull,-23.83120446792823,8786,2401,12727,full model did not finish within 120 s in this test; pruned solve about 31.6 s
+8_homogeneous_3_patterns,unpruned_exact_root_hull,-8.164684295727033,1960,,1535,all root pair moments instantiated
+8_homogeneous_3_patterns,certified_pair_pruned,-8.164684295727033,1873,437,1300,all quadratic rows and root pair variables removed by build-time composition certificate
+8_near_conserved_4_patterns,unpruned_exact_root_hull,-19.813558054334784,2256,,1602,all root pair moments instantiated
+8_near_conserved_4_patterns,certified_pair_pruned,-19.813558054334788,2168,439,1356,all quadratic rows and root pair variables removed by build-time composition certificate

@@ -1,0 +1,3 @@
+taxa,unique_sites,shared_dense_topology_vars,shared_physical_topology_vars,site_core_vars_each,core_vars_dense_total,core_vars_physical_total,with_1000_log_lambda_each_physical
+100,100,368330,259308,48145,5182830,5073808,5173808
+100,1000,368330,259308,48145,48513330,48404308,49404308

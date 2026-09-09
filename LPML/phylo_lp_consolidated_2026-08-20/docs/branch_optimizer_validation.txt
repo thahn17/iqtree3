@@ -1,0 +1,4 @@
+JC69 gradient_max_abs_error 9.073206630461073e-10
+JC69 optimized_logL -23.428675770242798 success True iterations 27 newick ((A:0.1367411921,B:1e-08):0.06837055752,(C:1e-08,D:0.1367412153):0.06837055752);
+GTR+F gradient_max_abs_error 2.534135540299687e-09
+GTR+F optimized_logL -25.4077371252707 success True iterations 28 newick ((A:0.1464356203,B:1e-08):0.07321156682,(C:1e-08,D:0.1507455472):0.07321156682);

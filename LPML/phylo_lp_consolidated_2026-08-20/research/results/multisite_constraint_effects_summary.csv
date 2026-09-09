@@ -1,0 +1,21 @@
+method,test_context,effect,keep_as_default
+beta^m scaling,single-site and alignment,"Exact algebraic scaling; reconstruction error ~1e-15 in direct tests; split coefficient exactly 1 before second scaling",yes
+count-adaptive scale s_m,alignment,"Keeps normalized count-m message components <=1; tested split coefficients roughly 1.06-236 on 8-taxon heterogeneous patterns; avoids tiny root coefficients",yes
+whole-router transportation,actual 8-taxon unit library,"Earlier single-site test: upper ~0.174 -> ~0.150 and variables ~5100 -> ~1850 versus switch-by-switch prototype",yes
+exact flow-1 base routing,actual 8-taxon unit library,"Earlier test: ~0.150 -> ~0.143",yes
+count/local component bounds,8-leaf variable topology,"Removed ~83-87% of plain absolute relaxation gap on tested patterns",yes
+parent<=child/sibling envelope,8-leaf variable topology,"Additional useful reduction; AAAACCGT 0.03359 -> 0.02775; smaller gains on others",yes
+joint stationary-mass facet,8-leaf variable topology,"No measurable gain after stronger component/parent-child cuts",no
+local 4x4 tensor + projection cuts,3-site shared-tree,"No objective improvement beyond root composition cuts; inequalities ~5.4k -> ~30.9k and solve much slower",no by default
+12-24 support directions,height tests,"Strong and height-independent in simplified trees; 12 directions nearly matched 24/40",optional
+15 base-presence classes,actual 8-leaf library,"Four-base AACCGGTT bound improved to ~4.31x exact; strong but expensive per site",optional/selective
+full composition classes,unit library scaling,"Polynomial but too large internally (millions of class vars by 32 leaves before couplings)",no
+split-aware exact-composition root cuts,8-32 leaf tests,"All 165 8-leaf compositions worst 1.327x, median 1.003x; balanced four-base ~1.16-1.19x through 32 leaves",yes
+first-moment composition class,composition tests,"Too weak; convex mixtures of homogeneous compositions mimic balanced composition",no
+second composition moments,prototype,"Root-only moments gave modest improvement; full recursive prototype not yet trusted",research only
+adaptive log tangents,small alignment,"Converged in 2-7 OA iterations; final log-function error <=1e-4; log approximation not the main gap",yes
+pair-site 16-state block without cross coupling,3-site shared-tree,"No improvement over separate site networks",no
+cheap pair-site cross coupling,3-site shared-tree,"No improvement; ~25x slower in tested pair",no
+fully routed pair-site cross coupling,3-site shared-tree,"Too expensive even at 8 taxa in prototype",no
+root shared taxon-membership first moments,3-site root bound,"Weak because concave composition envelope re-mixes compositions",no
+root pairwise taxon moments,3-site root bound,"Some tightening but overall root upper still loose; O(L^2) shared vars",research only

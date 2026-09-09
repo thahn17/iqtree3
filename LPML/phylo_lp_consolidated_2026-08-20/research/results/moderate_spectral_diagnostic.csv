@@ -1,0 +1,11 @@
+experiment,range_min,range_max,lp_score,selected_root,root4_activity,root4_forced_score,root4_drop,known_note
+spectral_full,0,inf,-203.7871135,2+6,0,-208.2399697,4.4528562,best-known topology logL -597.6503942
+spectral_bounded,0,2,-216.764756,1+7,0,,,root4 not profiled
+spectral_bounded,0,1,-241.606471,1+7,0,,,root4 not profiled
+spectral_bounded,0,0.5,-283.307276,1+7,0,-302.8065039,19.4992279,
+spectral_bounded,0,0.35,-309.087720,1+7,0,-334.0316270,24.9439070,
+spectral_bounded,0.04,0.35,-342.932505,1+7,0,-367.8978510,24.9653460,
+spectral_bounded,0.05,0.25,-379.670240,1+7,0,,,simulated lengths lie about 0.049..0.243
+spectral_bounded,0.08,0.25,-403.152282,1+7,0,,,
+spectral_bounded,0.10,0.20,-439.363153,1+7,0,,,
+two_point_default,,, -446.3896064,1+7,0,-481.3633200,34.9737136,

@@ -1,0 +1,15 @@
+L = 30
+total units = 9882
+taxon units = 30 (exactly one per supplied taxon)
+split units = 348
+router units = 9504
+total inter-unit connections = 19046
+max k = 2
+root candidates = 15
+variable-length internal paths = True
+variable-length scope = branches
+units/(L^2 log2 L) = 2.237670
+
+Every unit has upper_flow == descendant_count.
+Every connection row has a fixed edge_flow.
+Every internal logical edge and every alternative path segment has a fixed edge_flow.

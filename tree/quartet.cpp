@@ -8,6 +8,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <array>
+#include <map>
+#include <algorithm>
 
 #include "phylotree.h"
 #include "phylosupertree.h"
@@ -669,6 +672,108 @@ void finisheps(FILE *ofp, vector<SeqQuartetInfo> lmap_seq_quartet_info, int leaf
 //*** end of likelihood mapping stuff (imported from TREE-PUZZLE's lmap.c) (HAS) ***//
 
 
+/**
+    Same pairing convention computeQuartetLikelihoods itself uses: pairing k
+    (k=0,1,2) sets seqID[qc[4k]],seqID[qc[4k+1]] against
+    seqID[qc[4k+2]],seqID[qc[4k+3]]. Kept as one shared array (rather than a
+    second copy) so the dedup table below and the main loop can never drift
+    apart.
+ */
+static const int quartetPairingQC[12] = {0, 1, 2, 3,  0, 2, 1, 3,  0, 3, 1, 2};
+
+/**
+    Which of a bipartition's two 2-taxon sides is "first", as an
+    order-independent signature -- used only to recognize when two
+    (arbitrarily-ordered) pairings describe the *same* 2+2 split of the same
+    4 taxa.
+ */
+static std::pair<std::array<int,2>, std::array<int,2>> quartetPairSignature(
+        const std::array<int,4> &ids, int k) {
+    int x0 = quartetPairingQC[4*k], x1 = quartetPairingQC[4*k+1];
+    int x2 = quartetPairingQC[4*k+2], x3 = quartetPairingQC[4*k+3];
+    std::array<int,2> side1 = {std::min(ids[x0], ids[x1]), std::max(ids[x0], ids[x1])};
+    std::array<int,2> side2 = {std::min(ids[x2], ids[x3]), std::max(ids[x2], ids[x3])};
+    if (side2 < side1) std::swap(side1, side2);
+    return {side1, side2};
+}
+
+/**
+    quartetDedupTable()[rank] (rank = one of the 24 permutations of 0,1,2,3,
+    read as "seqID[i] is the rank[i]-th smallest of the 4 taxon ids") gives,
+    for each of THIS seqID order's 3 pairings (k=0,1,2, per quartetPairingQC),
+    which pairing-index (0,1,2) of the *sorted-taxon-order* pairing it is the
+    same 2+2 split as.
+
+    Built once, by directly exercising quartetPairSignature on synthetic
+    already-sorted ids (0,1,2,3) for every permutation, rather than deriving
+    the mapping by hand -- the same bootstrap-from-the-trusted-primitive
+    approach used for the analogous table in quartet_pipeline/exact_dynamic.py,
+    adopted after a hand-derived permutation direction caused a real bug
+    there. Values only depend on relative rank, never on the actual taxon
+    ids, so 24 entries cover every possible quartet.
+ */
+static const std::map<std::array<int,4>, std::array<int,3>> &quartetDedupTable() {
+    static const std::map<std::array<int,4>, std::array<int,3>> table = [] {
+        std::map<std::array<int,4>, std::array<int,3>> t;
+        std::array<int,4> sortedIds = {0, 1, 2, 3};
+        std::array<std::pair<std::array<int,2>, std::array<int,2>>, 3> canonicalSig;
+        for (int k = 0; k < 3; k++)
+            canonicalSig[k] = quartetPairSignature(sortedIds, k);
+
+        std::array<int,4> perm = {0, 1, 2, 3};
+        do {
+            std::array<int,3> idx;
+            for (int k = 0; k < 3; k++) {
+                auto sig = quartetPairSignature(perm, k);
+                for (int c = 0; c < 3; c++) {
+                    if (sig == canonicalSig[c]) { idx[k] = c; break; }
+                }
+            }
+            t[perm] = idx;
+        } while (std::next_permutation(perm.begin(), perm.end()));
+        return t;
+    }();
+    return table;
+}
+
+/**
+    Reorders a quartet's logl triple from one seqID order to another,
+    given both are orderings of the *same* 4 taxa. Used to reuse an
+    already-computed quartet's result for a later duplicate draw (--lmap /
+    quartet_topology_test sample with replacement across quartets, so the
+    same 4-taxon combination can recur -- see computeQuartetLikelihoods'
+    own usage below) instead of re-running extractSubAlignment and
+    optimizeAllBranches x3 for it again.
+ */
+static std::array<double,3> reorderQuartetLogl(
+        const std::array<int,4> &fromIds, const std::array<double,3> &fromLogl,
+        const std::array<int,4> &toIds) {
+    std::array<int,4> sortedIds = fromIds;
+    std::sort(sortedIds.begin(), sortedIds.end());
+
+    auto rankOf = [&](const std::array<int,4> &ids) {
+        std::array<int,4> rank;
+        for (int i = 0; i < 4; i++)
+            rank[i] = (int)(std::lower_bound(sortedIds.begin(), sortedIds.end(), ids[i]) - sortedIds.begin());
+        return rank;
+    };
+
+    const auto &table = quartetDedupTable();
+    std::array<int,3> fromIdx = table.at(rankOf(fromIds));
+    std::array<int,3> toIdx = table.at(rankOf(toIds));
+
+    // canonical[c] = fromLogl[k] where fromIdx[k] == c
+    std::array<double,3> canonical;
+    for (int k = 0; k < 3; k++)
+        canonical[fromIdx[k]] = fromLogl[k];
+
+    std::array<double,3> toLogl;
+    for (int k = 0; k < 3; k++)
+        toLogl[k] = canonical[toIdx[k]];
+    return toLogl;
+}
+
+
 void PhyloTree::computeQuartetLikelihoods(vector<QuartetInfo> &lmap_quartet_info, QuartetGroups &LMGroups) {
 
     if (leafNum < 4) 
@@ -826,7 +931,19 @@ void PhyloTree::computeQuartetLikelihoods(vector<QuartetInfo> &lmap_quartet_info
     }
     
     // fprintf(stderr,"XXX - #quarts: %d; #groups: %d, A: %d, B:%d, C:%d, D:%d\n", LMGroups.uniqueQuarts, LMGroups.numGroups, sizeA, sizeB, sizeC, sizeD);
-    
+
+
+    // Sampling is with replacement across quartets (see this function's own
+    // callers/docs), so the same 4-taxon combination can be drawn more than
+    // once. quartetResultCache remembers each distinct combination's result
+    // (in sorted-taxon-order canonical form, via reorderQuartetLogl above)
+    // the first time it's computed, so a later duplicate draw looks it up
+    // instead of repeating extractSubAlignment + 3x optimizeAllBranches for
+    // it. Declared here (before the parallel region) so all threads share
+    // one cache; every access is inside an omp critical section below, so
+    // this is safe even though std::map itself isn't thread-safe for
+    // concurrent writes.
+    std::map<std::array<int,4>, std::array<double,3>> quartetResultCache;
 
 #ifdef _OPENMP
     #pragma omp parallel
@@ -890,6 +1007,32 @@ void PhyloTree::computeQuartetLikelihoods(vector<QuartetInfo> &lmap_quartet_info
 	// *** taxa should not be sorted, because that changes the corners a dot is assigned to - removed HAS ;^)
         // obsolete: sort(lmap_quartet_info[qid].seqID, lmap_quartet_info[qid].seqID+4); // why sort them?!? HAS ;^)
 
+        std::array<int,4> curIds = {lmap_quartet_info[qid].seqID[0], lmap_quartet_info[qid].seqID[1],
+                                     lmap_quartet_info[qid].seqID[2], lmap_quartet_info[qid].seqID[3]};
+        std::array<int,4> sortedIds = curIds;
+        std::sort(sortedIds.begin(), sortedIds.end());
+
+        bool quartetCacheHit = false;
+        std::array<double,3> quartetCachedCanonical;
+#ifdef _OPENMP
+        #pragma omp critical(quartet_dedup_cache)
+#endif
+        {
+            auto cacheIt = quartetResultCache.find(sortedIds);
+            if (cacheIt != quartetResultCache.end()) {
+                quartetCachedCanonical = cacheIt->second;
+                quartetCacheHit = true;
+            }
+        }
+
+        if (quartetCacheHit) {
+            // Same 4 taxa already scored under a (possibly different) draw
+            // order earlier -- reuse that result instead of repeating
+            // extractSubAlignment + 3x optimizeAllBranches for it.
+            std::array<double,3> reordered = reorderQuartetLogl(sortedIds, quartetCachedCanonical, curIds);
+            for (int k = 0; k < 3; k++)
+                lmap_quartet_info[qid].logl[k] = reordered[k];
+        } else {
         // initialize sub-alignment and sub-tree
         IntVector seq_id;
         seq_id.insert(seq_id.begin(), lmap_quartet_info[qid].seqID, lmap_quartet_info[qid].seqID+4);
@@ -936,11 +1079,11 @@ void PhyloTree::computeQuartetLikelihoods(vector<QuartetInfo> &lmap_quartet_info
             } else {
                 //quartet_aln->buildSeqStates(getModel()->seq_states);
             }
-            
+
             // NOTE: we don't need to set phylo_tree in model and rate because parameters are not reoptimized
-            
-            
-            
+
+
+
             // loop over 3 quartets to compute likelihood
             for (int k = 0; k < 3; k++) {
                 string quartet_tree_str;
@@ -967,8 +1110,21 @@ void PhyloTree::computeQuartetLikelihoods(vector<QuartetInfo> &lmap_quartet_info
             }
             delete quartet_tree;
         }
-        
+
         delete quartet_aln;
+
+        {
+            std::array<double,3> computed = {lmap_quartet_info[qid].logl[0], lmap_quartet_info[qid].logl[1],
+                                              lmap_quartet_info[qid].logl[2]};
+            std::array<double,3> canonical = reorderQuartetLogl(curIds, computed, sortedIds);
+#ifdef _OPENMP
+            #pragma omp critical(quartet_dedup_cache)
+#endif
+            {
+                quartetResultCache[sortedIds] = canonical;
+            }
+        }
+        } // end of quartetCacheHit-else (the computed-from-scratch branch)
 
         // determine likelihood order
         int qworder[3]; // local (thread-safe) vector for sorting

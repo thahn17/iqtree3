@@ -1,0 +1,10 @@
+test,n,sites,extra_solves_or_points,base_s,extra_s,baseline_best_ll,alternative_best_ll,reference_ll,result
+root_profile_union,8,60,4,0.8185,0.5332,-446.2631,-450.2160,-427.3799,no improvement in this replicate
+root_profile_union,12,20,6,3.0353,1.4345,-207.2919,-204.9929,-185.4020,modest improvement
+face_quantile_A,8,60,24,,, -508.8570,-488.4569,-465.5670,improved but did not recover reference
+face_probe_saturation,8,60,4,,, -504.6663,-480.1386,-460.1130,large early improvement
+face_probe_saturation,8,60,24,,, -504.6663,-473.8165,-460.1130,further improvement
+face_probe_saturation,8,60,32,,, -504.6663,-488.7586,-460.1130,nonmonotone regression
+face_quantile,12,20,8,,, -219.5033,-223.1093,-185.1182,worse
+central_face,8,60,1,0.5797,0.5031,-454.4876,-442.8364,-430.3898,modest improvement
+central_face,12,20,1,2.3905,1.1719,-257.6158,-254.7539,-235.4801,modest improvement

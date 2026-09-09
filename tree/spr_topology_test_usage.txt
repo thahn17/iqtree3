@@ -10,6 +10,13 @@ IQ-TREE analysis pipeline, so most commands need no alignment or model --
 the exception is the likelihood command below, which does load a real
 alignment to actually evaluate the tree.
 
+The hill-climbing search itself (command 5) lives in tree/sprsearch.{h,cpp}
+rather than in spr_topology_test.cpp, because iqtree3 shares it: its
+--spr-refine flag runs this same search as the refinement stage of its own
+stochastic search, in place of NNI. See section 7 below. That split changed
+no behavior here -- --hillclimb calls into the shared module instead of
+owning it, and does exactly what it always did.
+
 
 Running these commands
 -------------------------
@@ -192,7 +199,17 @@ Tree argument convention (used by every command that takes a tree):
       fast [N]       propose N (default 1) random chooseGraft() candidates
                      per step instead of exhaustively scoring every
                      candidate within <radius> -- much cheaper per step,
-                     at the cost of not guaranteeing the radius's best move
+                     at the cost of not guaranteeing the radius's best move.
+
+                     Leave N at 1. A step scores N candidates but applies
+                     at most ONE move, so raising N pays N times over for a
+                     single attempt; the same budget spent on N cheap steps
+                     buys N chances to actually move. Measured on sim.fa
+                     (100 taxa, 10k sites): raising N from 5 to 50 halved
+                     the remaining gap to the optimum but cost 8.8x the
+                     time -- the returns scale badly enough that more
+                     ATTEMPTS beat more candidates per attempt at every
+                     budget tried.
       quiet          suppress per-step output; only header + final summary
                      print (timing is CPU-clock, not wall-clock, so this
                      doesn't affect reported time either way -- it just
@@ -529,6 +546,163 @@ Tree argument convention (used by every command that takes a tree):
 
     Example:
         build/spr_topology_test --branchlength-compare sim.treefile 6 50
+
+
+7) Using this SPR search inside iqtree3's own stochastic search
+------------------------------------------------------------------
+    build/iqtree3 -s <alignment> -m <model> --spr-refine "<flags>"
+    build/iqtree3 -s <alignment> -m <model> --nni-refine "<flags>"
+
+    These are iqtree3 flags, not spr_topology_test ones -- but the string
+    they take is written in exactly the vocabulary command 5's trailing
+    flags use, and is parsed by the same code (tree/sprsearch.cpp's
+    parseRefineSpec). The two tools deliberately share one flag language
+    rather than maintaining two that can drift.
+
+    What they change
+    ------------------
+    IQ-TREE's stochastic search is an iterated local search: each
+    iteration perturbs the current tree (doTreePerturbation -- random NNIs
+    on a tree drawn from the top of the candidate set), then hill-climbs
+    back up, then keeps the result only if it survives the candidate set.
+    "--spr-refine" replaces the hill-climb half -- normally doNNISearch --
+    with this file's own SPR search, run through the shared module
+    tree/sprsearch.h. Everything else about the iteration is untouched:
+    the same perturbation, the same candidate set, the same stopping rule,
+    the same model re-optimization on an improving iteration.
+
+    Without either flag, iqtree3 behaves exactly as it always has, and
+    spr_topology_test --hillclimb (command 5) is likewise unchanged --
+    all three are separate, fully working modes.
+
+    "--nni-refine" keeps the default NNI hill-climb but turns on the
+    reporting flags below, so an NNI-refined run and an SPR-refined run
+    can be compared in the same spreadsheet format. It is the only reason
+    to pass it: "--nni-refine """ is exactly the default.
+
+    Which flags apply
+    -------------------
+    Accepted by BOTH --spr-refine and --nni-refine (these describe what
+    gets reported, not how a step is chosen):
+
+      quiet          suppress the per-step output
+      record         append this run's convergence trajectory to
+                     record_<model><tag>.csv, same format and same
+                     appending behavior as command 5's own "record". The
+                     tag names the refiner, so the two never share a file:
+                     record_LG_spr_fast_learnradius.csv vs
+                     record_LG_nni.csv. The "gap to the true tree" column
+                     is NaN throughout -- a real analysis has no
+                     ground-truth tree, exactly as under "notree"
+      trajectory     one Newick line per completed iteration in
+                     trajectory_<run-id>.nwk
+      findopt [N]    the diagnostic whole-tree ML refit on a throwaway
+                     clone, read for its logL and discarded. Its cadence
+                     counts PERTURBATIONS here, not SPR steps: one refit
+                     every N kicks (default: every kick). Unlike command
+                     5, the refit uses THIS run's own model rather than
+                     the tool's GTR+FO/LG+FO default, since -m may well
+                     name something richer and a headroom figure measured
+                     under a weaker model would read as negative
+
+    Accepted by --spr-continuous only:
+
+      escape S T     escape a stalled search WITHOUT restarting it. Once S
+                     consecutive steps pass with no improvement, the
+                     current tree and score are saved, a deliberately
+                     negative random kick is applied, and T steps are spent
+                     trying to beat the saved score. Beat it and the
+                     excursion is kept; fail and the tree is rolled back
+                     exactly, as though the kick never happened. The stage
+                     gives up after 20 consecutive failed excursions, or
+                     when "steps N" runs out.
+
+                     This is IQ-TREE's own perturb-then-refine loop moved
+                     INSIDE one continuous SPR run. The difference is where
+                     a failed attempt lands: IQ-TREE restarts from a tree
+                     drawn out of the candidate set, whereas this reverts
+                     in place, so the search never gives up ground it has
+                     already won.
+
+                     The kick itself is whichever one the run is
+                     configured for -- --spr-perturb's random SPRs if that
+                     flag is given, otherwise IQ-TREE's own random-NNI kick
+                     -- at the same floor((ntaxa - 3) * --perturb) strength
+                     either way, so kick strength stays a single setting.
+                     Escaping runs get their own record file (the tag
+                     carries "_escape").
+
+    Accepted by --spr-refine only -- these shape an individual SPR step,
+    and mean exactly what they mean in command 5:
+
+      radius N       the step radius (default 6). Positional in command 5;
+                     a named flag here, since there is nowhere positional
+                     to put it
+      steps N        cap one refinement pass at exactly N SPR steps. WITHOUT
+                     it (the default) a pass instead climbs to a local
+                     optimum the way the NNI refinement it replaces does --
+                     running in blocks of (ntaxa - 3) steps and stopping
+                     once a whole block fails to improve. That matters:
+                     the perturbation applies floor((ntaxa - 3) * --perturb)
+                     random NNIs, 48 of them on a 100-taxon tree at the
+                     default strength, so a fixed budget that runs out
+                     before those are undone hands the candidate set a tree
+                     far WORSE than the one it was kicked from, and the
+                     search goes backwards. Give "steps N" only when you
+                     specifically want a fixed budget
+      fast [N]       N random chooseGraft() draws per step instead of
+                     exhaustively scoring the radius
+      reopt          Newton-Raphson on the 4 edges around each candidate.
+                     Turns on IQ-TREE's safe numerical scaling (-safe) for
+                     the whole run, as spr_topology_test does for the same
+                     flag: a real branch-length search can push a length to
+                     an extreme the plain kernel underflows on. Note this
+                     also disables the partial-likelihood cache (that path
+                     invalidates too broadly), so candidates cost roughly
+                     20x what they do without it
+      fullreopt M N  periodic whole-tree optimizeAllBranches sweep. Its
+                     optional third "true" token is NOT accepted -- that
+                     is an up-front fit of the STARTING tree, which is
+                     IQ-TREE's own job (see the rejected list below)
+      investigate [N], alternate, shrink [N], learnradius [N],
+      distradius, weightprune, sweep [N]
+                     all as documented in command 5. "sweep" runs once at
+                     the very end of the whole IQ-TREE search, over the
+                     final tree -- it is an end-of-run phase there too,
+                     not something to repeat per perturbation
+
+    Rejected, in both modes, with an error naming the IQ-TREE option that
+    already owns the job. These configure a whole standalone run rather
+    than a refinement pass, and silently ignoring one would leave you
+    believing it took effect:
+
+      random, iqtreestart, starttree    -> IQ-TREE's own -t / --ninit
+      model, gtr                        -> IQ-TREE's own -m
+      notree                            -> always implied; there is never
+                                           a ground-truth tree here
+
+    --spr-refine additionally refuses, up front, the tree shapes its
+    machinery is not written against: rooted trees, partition models
+    (-p/-q), PLL (use -nopll), and any sequence type other than DNA or
+    protein. Each is reported at startup, before the run spends anything
+    on model fitting.
+
+    Reading the record CSV
+    ------------------------
+    The "candidates evaluated" column is the x-axis both refiners share.
+    For SPR it counts scoreTrialSPRMove calls (one per trial regraft); for
+    NNI it counts scored alternative topologies (two per branch that
+    evaluateNNIs examines, since getBestNNIForBran scores both). Same
+    unit, so the two trajectories plot against each other directly.
+
+    Examples:
+        build/iqtree3 -s real.fa -m LG --spr-refine "radius 10 fast quiet"
+        build/iqtree3 -s real.fa -m LG --spr-refine "radius 10 fast learnradius 30 record"
+        build/iqtree3 -s real.fa -m LG --spr-refine "fast weightprune steps 200 record"
+        build/iqtree3 -s real.fa -m LG --nni-refine "record findopt 25"
+        (the last two produce record_LG_spr_fast_weightprune.csv and
+         record_LG_nni_findopt.csv -- directly comparable)
+
 
 
 Retired experiments and their findings

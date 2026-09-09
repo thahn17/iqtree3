@@ -1,0 +1,10 @@
+quantity,count,notes
+existing_shared_variables,1069732,topology + lower-arm lengths + boundary named-taxon membership
+root_pair_moment_variables,242550,"49 root candidates with left size >1 times C(100,2)"
+new_shared_variables,1312282,before site-specific likelihood/log variables
+shared_variable_increase_fraction,0.22673903370189916,about 22.7%
+root_pair_degree_equalities,4900,one per taxon per root candidate with left size >1
+root_pair_full_link_inequalities,727650,optional McCormick upper/lower links; shared once
+explicit_flow_k_taxon_packing_rows,9800,"k=2..99, all 100 taxa; no variables"
+root_moment_likelihood_rows_per_unique_site_if_2_facets,100,no new site variables
+root_moment_likelihood_rows_for_1000_unique_sites_if_2_facets,100000,coefficients cacheable by global base-count pattern

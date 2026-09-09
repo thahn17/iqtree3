@@ -513,6 +513,14 @@ enum IQP_ASSESS_QUARTET {
     IQP_DISTANCE, IQP_PARSIMONY, IQP_BOOTSTRAP
 };
 
+/**
+        Which hill-climber refines the tree after each perturbation of the
+        stochastic search. See Params::refine_mode.
+ */
+enum RefineMode {
+    REFINE_NNI, REFINE_SPR
+};
+
 enum LEAST_SQUARE_VAR {
     OLS, WLS_FIRST_TAYLOR, WLS_FITCH_MARGOLIASH, WLS_SECOND_TAYLOR, WLS_PAUPLIN
 };
@@ -769,7 +777,66 @@ public:
      * a switch to apply bias towards shorter branches during radom perturbation
      */
     bool weightedPerturbation;
-    
+
+    /**
+     *  Which algorithm hill-climbs back up after each perturbation ("kick")
+     *  of the stochastic search -- the refinement stage that follows
+     *  doTreePerturbation() in IQTree::doTreeSearch. REFINE_NNI is
+     *  IQ-TREE's own long-standing NNI search (doNNISearch), unchanged and
+     *  still the default; REFINE_SPR runs the SPR hill-climber shared with
+     *  spr_topology_test --hillclimb instead (IQTree::doSPRSearch, see
+     *  tree/sprsearch.h).
+     */
+    RefineMode refine_mode;
+
+    /**
+     *  Whether the PERTURBATION half of the stochastic search applies
+     *  random SPR moves instead of random NNIs (--spr-perturb). Entirely
+     *  orthogonal to refine_mode: an SPR kick can be paired with either
+     *  refiner, and the kick's STRENGTH is still --perturb/initPS either
+     *  way (the same floor((ntaxa-3) * initPS) count of random moves).
+     *
+     *  It exists because the default NNI kick and the NNI refiner are
+     *  matched in a way that flatters NNI: undoing N random NNIs is
+     *  precisely what an exhaustive NNI scan is built for. An SPR kick
+     *  removes that asymmetry.
+     */
+    bool spr_perturb;
+
+    /**
+     *  --spr-perturb's own flag string -- the subset of the shared SPR
+     *  vocabulary that describes a MOVE rather than a search: radius,
+     *  distradius, weightprune [long|short]. Parsed by
+     *  sprsearch::parseRefineSpec in "perturbation" mode.
+     */
+    string spr_perturb_spec;
+
+    /**
+     *  --spr-continuous: skip the perturb/refine loop entirely. Build the
+     *  candidate tree set as usual (IQ-TREE's own NNI machinery), then run
+     *  ONE long SPR hill-climb from the best candidate tree and stop --
+     *  the in-process equivalent of running iqtree3 for its starting
+     *  candidate set and handing that tree to spr_topology_test
+     *  --hillclimb. The bet is that SPR's own long-range moves escape
+     *  local optima directly, making the stochastic restart loop
+     *  unnecessary rather than something SPR has to keep recovering from.
+     *
+     *  Uses refine_spec for its settings, so it implies REFINE_SPR.
+     */
+    bool spr_continuous;
+
+    /**
+     *  --spr-refine/--nni-refine's own flag string, in exactly the
+     *  vocabulary spr_topology_test --hillclimb takes its trailing flags
+     *  in (e.g. "radius 10 fast quiet learnradius 30"). Stored raw here
+     *  and parsed by sprsearch::parseRefineSpec, called from
+     *  IQTree::initSettings -- the parser lives with the search it
+     *  configures so the two can never drift apart. Empty means neither
+     *  flag was given.
+     */
+    string refine_spec;
+
+
 	/**
 	 *  logl epsilon for model parameter optimization
 	 */

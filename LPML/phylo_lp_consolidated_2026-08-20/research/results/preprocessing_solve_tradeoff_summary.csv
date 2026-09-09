@@ -1,0 +1,36 @@
+family,L,pattern_or_case,setting,preprocess_or_build_s,solve_s,upper_ratio_or_objective,variables,inequalities,notes
+saturated_count,8,2-2-2-2,T1,0.00494,,1.24313,,,ratio to exact-composition root upper
+saturated_count,8,2-2-2-2,T2,0.00696,,1.00000,,,ratio to exact-composition root upper
+saturated_count,16,4-4-4-4,T1,0.02161,,1.27482,,,ratio to exact-composition root upper
+saturated_count,16,4-4-4-4,T2,0.12497,,1.04546,,,ratio to exact-composition root upper
+saturated_count,16,4-4-4-4,T3,0.22372,,1.01809,,,ratio to exact-composition root upper
+saturated_count,16,4-4-4-4,T4,0.25475,,1.00000,,,ratio to exact-composition root upper
+saturated_count,24,6-6-6-6,T1,0.04899,,1.61266,,,ratio to exact-composition root upper
+saturated_count,24,6-6-6-6,T2,0.34006,,1.33797,,,ratio to exact-composition root upper
+saturated_count,24,6-6-6-6,T3,1.22104,,1.26913,,,ratio to exact-composition root upper
+saturated_count,24,6-6-6-6,T4,2.46252,,1.20426,,,ratio to exact-composition root upper
+saturated_count,32,8-8-8-8,T1,0.08996,,,,,exact-composition variable-length DP exceeded 120 s
+saturated_count,32,8-8-8-8,T2,0.67493,,,,,upper 2.91167e-5
+saturated_count,32,8-8-8-8,T3,2.87596,,,,,upper 2.75654e-5
+saturated_count,32,8-8-8-8,T4,7.97737,,,,,upper 2.61677e-5
+saturated_count,64,16-16-16-16,T1,0.36367,,,,,upper 1.78802e-6
+saturated_count,64,16-16-16-16,T2,3.20221,,,,,upper 1.47546e-6
+saturated_count,64,16-16-16-16,T3,16.80153,,,,,upper 1.39160e-6
+saturated_count,100,25-25-25-25,T1,1.01522,,,,,upper 6.13702e-8
+saturated_count,100,25-25-25-25,T2,8.39830,,,,,upper 5.06419e-8
+root_envelope,8,1-pattern,K5,0.05326,0.03353,-8.25237262005,1368,1499,5-plane capped support
+root_envelope,8,1-pattern,lambda-exact-envelope,0.03189,0.04423,-8.25237262005,1564,1486,no hull preprocessing; 196 root lambdas
+root_envelope,8,1-pattern,exact-hull,0.06715,0.03709,-8.25237262004,1368,1830,348 root hull rows
+root_envelope,12,1-pattern,K5,0.16019,1.15350,-8.62916088915,3855,5167,5-plane capped support
+root_envelope,12,1-pattern,lambda-exact-envelope,0.12890,0.61080,-8.62916088913,4411,5146,no hull preprocessing; 556 root lambdas
+root_envelope,12,1-pattern,exact-hull,0.32237,1.77922,-8.62916088910,3855,5658,518 root hull rows
+root_envelope,16,1-pattern,K20,0.75306,7.76681,-9.06794229239,8189,11859,20-plane capped support
+root_envelope,16,1-pattern,K60,1.15380,10.05234,-9.06794229239,8189,11959,60-plane capped support
+root_envelope,16,1-pattern,lambda-exact-envelope,0.56366,11.10967,-9.06794229231,9605,11764,no hull preprocessing; 1416 root lambdas
+root_envelope,16,1-pattern,exact-hull,>120,,, , ,timed out in dedicated test window
+shifted_planes,16,1-pattern,K1,0.55786,8.44636,-9.06794229251,8189,11772,global shifted least-squares majorant
+shifted_planes,16,1-pattern,K4,0.57722,5.68911,-9.06794229251,8189,11796,linear-time valid majorants
+shifted_planes,16,1-pattern,K16,0.57306,4.69837,-9.06794229251,8189,11892,linear-time valid majorants
+other_preprocess,100,100-taxon-library,generator-variable-length-branches,17.26,,,,,writes 434 MB artifacts; max RSS about 1.57 GB
+other_preprocess,100,1000-uniform-columns,pair-cover,1.95,,,,,5 anchors in test
+other_preprocess,100,1000-uniform-columns,quadratic-redundancy-certificate,0.061,,,,,1000 unique count patterns tested in script example

@@ -1,0 +1,6 @@
+modes=3
+mu=[0.8890491618495129, 1.2266540498085452, 1.8359341115240153]
+constraints=26
+vertices=24
+max_transition_reconstruction_error=1.751154776741259e-11
+max_sampled_physical_polytope_violation=3.33066907387547e-16

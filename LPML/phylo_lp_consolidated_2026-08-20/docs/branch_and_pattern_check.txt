@@ -1,0 +1,22 @@
+Branch/pattern validation
+=========================
+
+Duplicate-column test alignment: 5 columns.
+Unique exact site patterns: 2.
+Unique LP site patterns: 2.
+Columns merged by LP: 3.
+Final likelihood compression weights in direct unit test: [3, 2], sum 5.
+
+Final integral-tree branch optimizer defaults after patch:
+  min = 1e-12 substitutions/site (effectively zero)
+  max = auto saturation length = max(10, -log(1e-12)/spectral_gap(Q))
+  JC69 effective max = 20.723265836946418
+  example GTR+F effective max = 39.23577925907543
+
+Important LP distinction:
+  The LP branch proxy is still the existing two-path short/long model.
+  At default long_ratio=2 and <=100 taxa, endpoint pairs are approximately
+  flow 1: [0.100, 0.200]
+  flow 2: [0.073, 0.146]
+  flow 99: [0.1743, 0.3487]
+  so the LP itself does not yet span [0, infinity).

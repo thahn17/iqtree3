@@ -1,0 +1,2 @@
+taxa,split_units,root_candidates,nonroot_split_units,terminal_edges,shared_length_selectors,new_long_vector_vars_per_unique_pattern,current_core_vars_per_unique_pattern,per_pattern_direct_increase_fraction,shared_topology_vars_approx,shared_selector_increase_fraction
+100,4012,50,3962,100,4062,15848,48145,0.3291722920344792,259308,0.015664769309084177
