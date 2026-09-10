@@ -69,6 +69,7 @@ void IQTree::init() {
     // spr_opt/spr_state default-construct themselves; initRefinement fills
     // them in only when --spr-refine/--nni-refine was actually given
     refine_kick_count = 0;
+    accept_progress = 0.0;
 
     treels_name = Params::getInstance().out_prefix;
     treels_name += ".treels";
@@ -1839,6 +1840,28 @@ string IQTree::doRandomNNIs(bool storeTabu) {
         }
     }
 
+    // --perturb-slack: bound how far one kick move may drive the tree
+    // downhill, the same rule --spr-perturb's "slack" applies to the SPR
+    // kick. Without it this loop is blind, exactly as before.
+    bool slackOn = Params::getInstance().perturb_slack;
+    double slackDelta = 0.0;
+    double slackCur = 0.0;
+    long slackKept = 0, slackRefused = 0;
+    const int maxSlackDraws = 8;
+    int slackDraws = 0;
+    if (slackOn) {
+        slackDelta = Params::getInstance().perturb_slack_delta;
+        if (Params::getInstance().perturb_slack_anneal) {
+            int horizon = params->min_iterations > 0 ? params->min_iterations : 100;
+            double scale = 1.0 - ((double) refine_kick_count / (double) horizon);
+            if (scale < 0.0)
+                scale = 0.0;
+            slackDelta *= scale;
+        }
+        clearAllPartialLH();
+        slackCur = computeLikelihood();
+    }
+
     initTabuSplits.clear();
     while (cntNNI < numRandomNNI) {
         nniBranches.clear();
@@ -1901,6 +1924,28 @@ string IQTree::doRandomNNIs(bool storeTabu) {
         if (constraintTree.isCompatible(randNNI)) {
             // only if random NNI satisfies constraintTree
             doNNI(randNNI);
+            if (slackOn) {
+                // score what the kick just did; undo it and redraw if it
+                // costs more than the bound allows
+                clearAllPartialLH();
+                double after = computeLikelihood();
+                if (std::isfinite(after) && after > slackCur - slackDelta) {
+                    slackCur = after;
+                    slackKept++;
+                    slackDraws = 0;
+                } else {
+                    doNNI(randNNI);       // an NNI is its own inverse
+                    clearAllPartialLH();
+                    slackRefused++;
+                    if (slackDraws < maxSlackDraws) {
+                        slackDraws++;
+                        continue;         // same slot, fresh draw
+                    }
+                    slackDraws = 0;
+                    cntNNI++;             // give up on this slot
+                    continue;
+                }
+            }
             if (storeTabu) {
                 Split *sp = getSplit(randNNI.node1, randNNI.node2);
                 Split *tabuSplit = new Split(*sp);
@@ -1911,6 +1956,12 @@ string IQTree::doRandomNNIs(bool storeTabu) {
             }
         }
         cntNNI++;
+    }
+    if (slackOn) {
+        spr_state.slackAccepted += slackKept;
+        spr_state.slackRejected += slackRefused;
+        spr_state.slackKicks++;
+        spr_state.slackLastDelta = slackDelta;
     }
     if (verbose_mode >= VB_MAX)
         cout << "Tree perturbation: number of random NNI performed = " << cntNNI << endl;
@@ -2577,6 +2628,16 @@ double IQTree::doTreeSearch() {
         /*----------------------------------------
          * Perturb the tree
          *---------------------------------------*/
+        // one consistent annealing clock for both refiners, refreshed
+        // before the iteration that will read it
+        if (accept_dist.enabled) {
+            int horizon = params->min_iterations > 0 ? params->min_iterations : 100;
+            accept_progress = (double) stop_rule.getCurIt() / (double) horizon;
+            if (accept_progress > 1.0)
+                accept_progress = 1.0;
+            spr_opt.acceptDist = accept_dist;
+            spr_opt.acceptProgressBase = accept_progress;
+        }
         doTreePerturbation();
 
         /*----------------------------------------
@@ -2762,6 +2823,31 @@ double IQTree::doTreeSearch() {
 
     cout << "TREE SEARCH COMPLETED AFTER " << stop_rule.getCurIt() << " ITERATIONS"
     << " / Time: " << convert_time(getRealTime() - params->start_real_time) << endl << endl;
+
+    writeSearchStats();
+
+    // --quartet-perturb accounting, printed into the log so a run's kick
+    // composition can be recovered afterwards without the harness that
+    // launched it. "random fallback" counts both coin-flip randoms and
+    // moves where no sampled branch had an improving resolution -- if it
+    // dominates at fraction 1.0, the tree already agrees with C and the
+    // variant has quietly degenerated into the stock kick.
+    if (accept_dist.enabled) {
+        cout << "accept-dist     : " << spr_state.acceptedDownhill << " downhill move(s) kept of "
+             << spr_state.offeredDownhill << " offered; T0 " << accept_dist.temperature
+             << " shape " << accept_dist.shape
+             << (accept_dist.anneal ? " annealed" : " constant")
+             << ", last effective T " << spr_state.lastTemperature
+             << ", best-seen restore " << (spr_state.bestSeenRestored ? "fired" : "not needed")
+             << endl << endl;
+    }
+    if (Params::getInstance().perturb_slack || spr_perturb_opt.slackFlag) {
+        cout << "slack summary   : " << spr_state.slackAccepted << " kick move(s) applied, "
+             << spr_state.slackRejected << " refused, over " << spr_state.slackKicks
+             << " kick(s); delta " << spr_perturb_opt.slackDelta
+             << (spr_perturb_opt.slackAnneal ? " annealed" : " constant")
+             << ", last effective " << spr_state.slackLastDelta << endl << endl;
+    }
 
     return candidateTrees.getBestScore();
 
@@ -3238,7 +3324,13 @@ double IQTree::doTreePerturbation() {
             } else {
                 readTreeString(candidateTrees.getRandTopTree(Params::getInstance().popSize));
             }
-            if (Params::getInstance().spr_perturb) {
+            if (Params::getInstance().accept_dist) {
+                // --accept-dist replaces the kick outright: escaping a
+                // local optimum is the acceptance rule's job now, and
+                // running a kick as well would make it impossible to say
+                // which mechanism did the escaping. The candidate tree
+                // read above is left exactly as drawn.
+            } else if (Params::getInstance().spr_perturb) {
                 // --spr-perturb: random SPR moves instead of random NNIs,
                 // the same count the NNI kick would have used so --perturb
                 // still means the same thing. See doRandomSPRs.
@@ -3338,6 +3430,46 @@ pair<int, int> IQTree::doNNISearch(bool write_info) {
 
 void IQTree::initRefinement(Params &params) {
     refine_kick_count = 0;
+
+    // --accept-dist: "temp T", "shape S", "anneal", "floor F", in any
+    // order. A bare --accept-dist (empty spec) means every default, which
+    // is the point of the defaults -- see sprsearch.h's AcceptDist for why
+    // T = 0.5 is the convergence-oriented choice.
+    if (params.accept_dist) {
+        accept_dist.enabled = true;
+        istringstream tokens(params.accept_dist_spec);
+        string t;
+        while (tokens >> t) {
+            if (t == "temp") {
+                if (!(tokens >> accept_dist.temperature))
+                    outError("--accept-dist: \"temp\" needs a value");
+            } else if (t == "shape") {
+                if (!(tokens >> accept_dist.shape))
+                    outError("--accept-dist: \"shape\" needs a value");
+            } else if (t == "floor") {
+                if (!(tokens >> accept_dist.tempFloor))
+                    outError("--accept-dist: \"floor\" needs a value");
+            } else if (t == "anneal") {
+                accept_dist.anneal = true;
+            } else {
+                outError("--accept-dist: unknown token \"" + t + "\" "
+                         "(expected temp/shape/anneal/floor)");
+            }
+        }
+        if (accept_dist.temperature <= 0.0)
+            outError("--accept-dist: temperature must be positive");
+        if (accept_dist.shape <= 0.0)
+            outError("--accept-dist: shape must be positive");
+        if (accept_dist.tempFloor < 0.0)
+            outError("--accept-dist: floor must not be negative");
+        cout << "Stochastic acceptance: P(keep) = exp(-(|dL|/T)^" << accept_dist.shape
+             << "), T = " << accept_dist.temperature
+             << (accept_dist.anneal ? " annealing to " : " constant (floor ")
+             << accept_dist.tempFloor << (accept_dist.anneal ? "" : ")")
+             << "; perturbation stage suppressed" << endl;
+        // the SPR refiner reads the rule off its own options struct
+        spr_opt.acceptDist = accept_dist;
+    }
 
     // --spr-perturb is independent of the refinement mode: it can be given
     // on its own (SPR kick, NNI refinement), so it is parsed and validated
@@ -3459,7 +3591,20 @@ void IQTree::doRandomSPRs() {
     if (leafNum >= 4 && numMoves == 0)
         numMoves = 1;
 
-    int applied = sprsearch::doRandomSPRs(*this, spr_perturb_opt, numMoves);
+    // "slack anneal": decay the kick's permitted damage toward 0 as the
+    // run progresses, so early kicks explore and late ones barely disturb
+    // the incumbent. The horizon is params->min_iterations (IQ-TREE's own
+    // minimum iteration count, 100 by default) rather than the true total,
+    // which the stopping rule does not know in advance; past that point the
+    // scale simply pins at 0 and the kick becomes strictly non-worsening.
+    double annealScale = 1.0;
+    if (spr_perturb_opt.slackAnneal) {
+        int horizon = params->min_iterations > 0 ? params->min_iterations : 100;
+        annealScale = 1.0 - ((double) refine_kick_count / (double) horizon);
+        if (annealScale < 0.0)
+            annealScale = 0.0;
+    }
+    int applied = sprsearch::doRandomSPRs(*this, spr_perturb_opt, numMoves, &spr_state, annealScale);
     if (verbose_mode >= VB_MAX)
         cout << "Tree perturbation: number of random SPR performed = " << applied << endl;
 
@@ -3634,6 +3779,25 @@ double IQTree::doSPRSearch(int blockCap, int patience) {
     // optimizer cannot track its incremental tree_lh accurately and trips
     // its consistency assertion. Clamp to the same floor the periodic
     // re-optimization uses before handing the tree over.
+    // --accept-dist walks downhill by design, so the stage's endpoint is
+    // routinely worse than the best tree it passed through. Restore that
+    // high-water mark before the model-reopt tail, so what gets reported is
+    // the best tree actually found rather than wherever the walk stopped.
+    if (spr_opt.acceptDist.enabled && !spr_state.bestSeenTree.empty()
+            && spr_state.bestSeenScore > curScore) {
+        double drifted = curScore;
+        readTreeString(spr_state.bestSeenTree);
+        initializeTree();
+        deleteAllPartialLh();
+        initializeAllPartialLh();
+        clearAllPartialLH();
+        curScore = computeLikelihood();
+        spr_state.bestSeenRestored = true;
+        if (!spr_opt.quiet)
+            cout << "  [accept-dist] restored best-seen tree: " << curScore
+                 << " (walk ended at " << drifted << ")" << endl;
+    }
+
     sprsearch::clampAllBranchLengthsForOptimization(*this, params->min_branch_length);
     clearAllPartialLH();
     curScore = computeLikelihood();
@@ -3680,6 +3844,16 @@ double IQTree::doContinuousSPRStage() {
         cout << "Continuous SPR stage: logL " << startScore << " -> " << escScore
              << " (" << spr_state.stepsRun << " steps, " << spr_state.candidatesEvaluated
              << " candidates evaluated)" << endl;
+    // "tunnel" accounting: entered counts marginally-rejected steps that
+    // were probed from, committed counts those that actually cleared the
+    // barrier. committed near zero means the flag only bought extra
+    // evaluations on this data.
+    if (spr_opt.tunnelFlag) {
+        cout << "tunnel summary  : " << spr_state.tunnelEntered << " entered, "
+             << spr_state.tunnelCommitted << " cleared, "
+             << spr_state.tunnelProbes << " probe evaluation(s), tolerance "
+             << spr_opt.tunnelTolerance << ", tries " << spr_opt.tunnelTries << endl;
+    }
         return escScore;
     }
 
@@ -3711,6 +3885,16 @@ double IQTree::doContinuousSPRStage() {
     cout << "Continuous SPR stage: logL " << startScore << " -> " << finalScore
          << " (" << spr_state.stepsRun << " steps, " << spr_state.candidatesEvaluated
          << " candidates evaluated)" << endl;
+    // "tunnel" accounting: entered counts marginally-rejected steps that
+    // were probed from, committed counts those that actually cleared the
+    // barrier. committed near zero means the flag only bought extra
+    // evaluations on this data.
+    if (spr_opt.tunnelFlag) {
+        cout << "tunnel summary  : " << spr_state.tunnelEntered << " entered, "
+             << spr_state.tunnelCommitted << " cleared, "
+             << spr_state.tunnelProbes << " probe evaluation(s), tolerance "
+             << spr_opt.tunnelTolerance << ", tries " << spr_opt.tunnelTries << endl;
+    }
     return finalScore;
 }
 
@@ -3821,12 +4005,90 @@ double IQTree::runEscapingSPRStage() {
     return curScore;
 }
 
+/**
+    One line of key=value pairs per run, to <prefix>.searchstats.txt.
+
+    The same numbers already appear in the .log, but only inside prose that
+    a sweep script has to regex its way through -- and this session added
+    several search variants whose results otherwise live only there. Writing
+    them in a stable, parseable form means a comparison table can be built
+    from the files themselves rather than from log scraping that breaks the
+    moment a message is reworded.
+ */
+void IQTree::writeSearchStats() {
+    string path = string(params->out_prefix) + ".searchstats.txt";
+    ofstream out(path.c_str());
+    if (!out.is_open())
+        return;
+    out.precision(10);
+    out << "prefix=" << params->out_prefix
+        << " seed=" << params->ran_seed
+        << " iterations=" << stop_rule.getCurIt()
+        << " best_logl=" << candidateTrees.getBestScore()
+        << " cpu_seconds=" << getCPUTime()
+        << " wall_seconds=" << (getRealTime() - params->start_real_time);
+
+    out << " refiner=" << (params->refine_mode == REFINE_SPR ? "spr" : "nni");
+    out << " kick=" << (params->accept_dist ? "none"
+                        : (params->spr_perturb ? "spr" : "nni"));
+
+    out << " accept_dist=" << (accept_dist.enabled ? "on" : "off");
+    if (accept_dist.enabled) {
+        out << " accept_temp=" << accept_dist.temperature
+            << " accept_shape=" << accept_dist.shape
+            << " accept_anneal=" << (accept_dist.anneal ? "yes" : "no")
+            << " accept_floor=" << accept_dist.tempFloor
+            << " accept_last_temp=" << spr_state.lastTemperature
+            << " downhill_kept=" << spr_state.acceptedDownhill
+            << " downhill_offered=" << spr_state.offeredDownhill
+            << " bestseen_restored=" << (spr_state.bestSeenRestored ? "yes" : "no");
+    }
+
+    bool slackOn = Params::getInstance().perturb_slack || spr_perturb_opt.slackFlag;
+    out << " slack=" << (slackOn ? "on" : "off");
+    if (slackOn) {
+        double d = Params::getInstance().perturb_slack
+                 ? Params::getInstance().perturb_slack_delta : spr_perturb_opt.slackDelta;
+        bool an = Params::getInstance().perturb_slack
+                 ? Params::getInstance().perturb_slack_anneal : spr_perturb_opt.slackAnneal;
+        out << " slack_delta=" << d
+            << " slack_anneal=" << (an ? "yes" : "no")
+            << " slack_last_delta=" << spr_state.slackLastDelta
+            << " slack_applied=" << spr_state.slackAccepted
+            << " slack_refused=" << spr_state.slackRejected
+            << " slack_kicks=" << spr_state.slackKicks;
+    }
+
+    if (spr_opt.tunnelFlag) {
+        out << " tunnel=on tunnel_tol=" << spr_opt.tunnelTolerance
+            << " tunnel_tries=" << spr_opt.tunnelTries
+            << " tunnel_entered=" << spr_state.tunnelEntered
+            << " tunnel_cleared=" << spr_state.tunnelCommitted
+            << " tunnel_probes=" << spr_state.tunnelProbes;
+    } else {
+        out << " tunnel=off";
+    }
+
+    out << " candidates_evaluated=" << spr_state.candidatesEvaluated;
+    out << endl;
+    out.close();
+    cout << "Search statistics written to " << path << endl;
+}
+
 void IQTree::recordRefineIteration() {
+    // Advance the kick counter UNCONDITIONALLY, before the early return
+    // below. "slack anneal" reads refine_kick_count (via doRandomSPRs) to
+    // schedule its own decay, and that has to work whether or not
+    // --spr-refine/--nni-refine is also active -- --spr-perturb alone is a
+    // fully supported configuration. Everything past this point (the
+    // record CSV, trajectory file, findopt) is real work that only matters
+    // under one of those two flags, so it stays behind the guard.
+    refine_kick_count++;
+
     if (params->refine_mode == REFINE_NNI && params->refine_spec.empty())
         return;
 
     finalizeRefineIdentity();
-    refine_kick_count++;
 
     if (spr_opt.recordProgress)
         sprsearch::appendRecordRow(spr_state.modelName, spr_state.recordTag, spr_state.runId,
@@ -3853,6 +4115,11 @@ pair<int, int> IQTree::optimizeNNI(bool speedNNI) {
     unsigned int totalNNIApplied = 0;
     unsigned int numSteps = 0;
     const int MAXSTEPS = leafNum;
+    // --accept-dist: consecutive non-improving inner steps tolerated before
+    // this loop gives up. Bounds the cost of letting the walk continue past
+    // a step that lost ground (see the break test below).
+    int acceptStall = 0;
+    const int ACCEPT_STALL_LIMIT = 5;
 //    unsigned int numInnerBranches = leafNum - 3;
     double curBestScore = candidateTrees.getBestScore();
 
@@ -3991,7 +4258,25 @@ pair<int, int> IQTree::optimizeNNI(bool speedNNI) {
             showProgress();
         }
 
-        if (curScore - oldScore <  params->loglh_epsilon) {
+        // Under --accept-dist a step is ALLOWED to lose ground, so the
+        // usual "stop as soon as an iteration stops improving" test would
+        // end the search on the first tolerated move. Keep going while the
+        // rule can still admit something; the high-water mark below is what
+        // protects the result.
+        if (accept_dist.enabled && accept_dist.effectiveTemperature(accept_progress) > 0.0) {
+            // Allow a bounded run of non-improving steps rather than
+            // stopping at the first one -- otherwise a tolerated downhill
+            // move ends the search immediately and the rule can never pay
+            // off. The bound matters: without it this loop runs to MAXSTEPS
+            // (= leafNum) every iteration, which measured ~8x the CPU of a
+            // plain NNI iteration on a 500-taxon alignment for no benefit.
+            if (curScore - oldScore < params->loglh_epsilon) {
+                if (++acceptStall >= ACCEPT_STALL_LIMIT)
+                    break;
+            } else {
+                acceptStall = 0;
+            }
+        } else if (curScore - oldScore <  params->loglh_epsilon) {
             break;
         }
 
@@ -4309,7 +4594,20 @@ void IQTree::evaluateNNIs(Branches &nniBranches, vector<NNIMove>  &positiveNNIs)
         // Without this an NNI-refined trajectory would have no x-axis to
         // plot an SPR-refined one against. See IQTree::recordRefineIteration.
         spr_state.candidatesEvaluated += 2;
-        if (nni.newloglh > curScore) {
+        // --accept-dist: an NNI that loses ground may still be admitted,
+        // with probability set by the rule. This is the NNI refiner's
+        // accept/reject point, the exact counterpart of the SPR step
+        // loop's own -- so one flag governs both refiners.
+        bool takeIt = (nni.newloglh > curScore);
+        if (!takeIt && accept_dist.enabled) {
+            spr_state.offeredDownhill++;
+            spr_state.lastTemperature = accept_dist.effectiveTemperature(accept_progress);
+            if (accept_dist.accept(nni.newloglh - curScore, accept_progress)) {
+                takeIt = true;
+                spr_state.acceptedDownhill++;
+            }
+        }
+        if (takeIt) {
             positiveNNIs.push_back(nni);
         }
 

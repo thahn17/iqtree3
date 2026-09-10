@@ -632,6 +632,116 @@ Tree argument convention (used by every command that takes a tree):
                      Escaping runs get their own record file (the tag
                      carries "_escape").
 
+    Top-level iqtree3 flags added alongside these (neither belongs to a
+    refine/perturb spec string -- both are their own CLI flags):
+
+      --perturb-slack D [anneal]
+                     the kick-agnostic spelling of --spr-perturb's "slack".
+                     Bounds one PERTURBATION move's damage to D
+                     log-likelihood, whichever kick is running: with
+                     --spr-perturb it bounds the SPR kick, and WITHOUT it
+                     bounds IQ-TREE's own default random-NNI kick. That is
+                     the only way to get the behaviour on the NNI kick, so
+                     the same bound can be compared across both. "anneal"
+                     decays D to 0 across the first min_iterations kicks.
+                     Refused draws are rolled back and redrawn (up to 8
+                     attempts per slot), so a kick still lands its full
+                     move count wherever it can.
+
+      --accept-dist ["SPEC"]
+                     replace the REFINEMENT's strict improve-only rule with
+                     a stochastic one, AND suppress the perturbation stage
+                     entirely. A move losing |dL| is kept with probability
+
+                         P = exp(-(|dL| / T)^shape)
+
+                     while any improvement is kept outright (P = 1). So the
+                     whole (-inf, 0) side of the likelihood-change axis is a
+                     tunable curve and [0, inf) is flat at 1.
+
+                     SPEC is any of, in any order:
+                       temp T     the tolerable-loss scale (default 0.5)
+                       shape S    falloff exponent (default 1)
+                       anneal     decay T toward "floor" over the run
+                       floor F    lowest T annealing may reach (default 0)
+
+                     shape = 1 is the classic Boltzmann/Metropolis rule;
+                     shape = 2 stays near 1 well inside T then falls off a
+                     cliff; shape -> infinity becomes a hard threshold at
+                     |dL| = T, which is exactly what "slack" does -- so
+                     slack is the limiting case of this same family rather
+                     than an unrelated idea.
+
+                     The default T = 0.5 is chosen for FINAL CONVERGENCE
+                     rather than exploration: a move 0.5 worse is kept with
+                     P = 0.37, one 2 worse with P = 0.018, one 5 worse with
+                     P = 4.5e-5. Small backward steps that let the search
+                     round a barrier are admitted; genuinely destructive
+                     moves effectively never are. Raise T to explore. With
+                     "anneal" and the default floor of 0 the run ends as a
+                     strict hill-climb no matter how it started, which is
+                     the point: the walk converges rather than wandering.
+
+                     Because accepted downhill moves let the CURRENT tree
+                     drift below the best one seen, the best topology is
+                     tracked and restored before the result is reported --
+                     the run never reports wherever the walk happened to
+                     stop.
+
+                     Applies to BOTH refiners at each one's own accept/
+                     reject point: the SPR step loop's keep/revert test, and
+                     the NNI refiner's evaluateNNIs filter. It composes with
+                     --spr-refine (SPR refinement) or the default NNI
+                     refinement without further configuration.
+
+    Accepted by --spr-perturb only -- these shape the KICK, parsed by
+    sprsearch.cpp's parsePerturbSpec rather than parseRefineSpec:
+
+      radius N       how far the kick's SPR draws reach (default 6). Same
+                     meaning as command 5's positional radius
+      distradius     kick draws use chooseGraftByDistance (radius read as
+                     a PERCENTAGE of the tree's total branch length)
+                     instead of a fixed hop count -- same meaning as
+                     --spr-refine's own "distradius"
+      weightprune [long]  bias which edge the kick prunes from, same
+                     weighting command 5's "weightprune" uses ("short" is
+                     deprecated -- see the retired-experiments note below)
+      slack D [anneal]  bound how much worse a single kick move is allowed
+                     to make the tree. Without it, --spr-perturb's moves
+                     are applied blind: no score is consulted, so a kick's
+                     total damage is unbounded (floor((ntaxa-3)*--perturb)
+                     moves, each free to land anywhere). With "slack D",
+                     each proposed move is scored, and kept only if it
+                     costs at most D log-likelihood versus the tree before
+                     that move; a costlier draw is rolled back and another
+                     target is tried (up to 8 redraws per slot, then that
+                     slot is given up on rather than spinning forever).
+                     The idea is to keep the kick inside a basin the
+                     refinement stage can still climb back out of, rather
+                     than letting it wander anywhere at all.
+
+                     "anneal" decays D linearly from its given value down
+                     to 0 across the run's first min_iterations kicks (the
+                     -n/--ninit-derived iteration count IQ-TREE would
+                     otherwise stop at by default), then holds at 0 --
+                     i.e. early kicks are more exploratory and later ones
+                     barely disturb the incumbent at all. Without
+                     "anneal", D is constant for the whole run.
+
+                     This is strictly a perturbation-side flag: passing it
+                     to --spr-refine or --nni-refine is an error, since
+                     accepting a downhill move inside the HILL-CLIMB would
+                     let a non-improving tree leak into what the search
+                     reports. (Contrast "tunnel", a --spr-refine-only flag
+                     that tolerates a downhill move inside the hill-climb,
+                     but only transiently, while a paired follow-up move is
+                     being tested, and never keeps it alone.)
+
+                     Every kick prints one summary line: how many moves
+                     were applied vs. refused, over how many kicks, and
+                     the effective delta (after annealing, if used) on the
+                     kick that just ran.
+
     Accepted by --spr-refine only -- these shape an individual SPR step,
     and mean exactly what they mean in command 5:
 

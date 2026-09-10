@@ -4665,6 +4665,36 @@ void parseArg(int argc, char *argv[], Params &params) {
                 continue;
             }
 
+            // --accept-dist: stochastic acceptance in the REFINEMENT,
+            // and no perturbation at all. See Params::accept_dist.
+            if (strcmp(argv[cnt], "--accept-dist") == 0) {
+                params.accept_dist = true;
+                // the spec is optional: a bare --accept-dist means all
+                // defaults (temp 0.5, shape 1, no annealing)
+                if (cnt + 1 < argc && argv[cnt + 1][0] != '-') {
+                    cnt++;
+                    params.accept_dist_spec = argv[cnt];
+                }
+                continue;
+            }
+
+            // --perturb-slack: the kick-agnostic spelling of --spr-perturb's
+            // "slack", so the same bound can be applied to the NNI kick.
+            if (strcmp(argv[cnt], "--perturb-slack") == 0) {
+                cnt++;
+                if (cnt >= argc)
+                    throw "Use --perturb-slack <delta> [anneal]";
+                params.perturb_slack = true;
+                params.perturb_slack_delta = convert_double(argv[cnt]);
+                if (params.perturb_slack_delta <= 0.0)
+                    throw "--perturb-slack delta must be positive";
+                if (cnt + 1 < argc && strcmp(argv[cnt + 1], "anneal") == 0) {
+                    cnt++;
+                    params.perturb_slack_anneal = true;
+                }
+                continue;
+            }
+
             if (strcmp(argv[cnt], "--nni-refine") == 0) {
                 cnt++;
                 if (cnt >= argc)
@@ -5909,6 +5939,9 @@ void usage_iqtree(char* argv[], bool full_command) {
     << "  --spr-continuous \"FLAGS\" Skip the perturb/refine loop: build the candidate set," << endl
     << "                       then run ONE long SPR hill-climb from its best tree" << endl
     << "  --spr-perturb [\"FLAGS\"] Perturb with random SPR moves instead of random NNIs." << endl
+    << "  --perturb-slack D [anneal]  Bound one kick move's damage to D logL (any kick)." << endl
+    << "  --accept-dist [\"SPEC\"]  Stochastic acceptance in refinement; no perturbation." << endl
+    << "                       SPEC: temp T | shape S | anneal | floor F" << endl
     << "                       FLAGS may set radius/distradius/weightprune [long|short]" << endl
     << "  --radius NUM         Radius for parsimony SPR search (default: 6)" << endl
     << "  --allnni             Perform more thorough NNI search (default: OFF)" << endl
@@ -7428,6 +7461,11 @@ void Params::setDefault() {
     spr_perturb = false;
     spr_perturb_spec = "";
     spr_continuous = false;
+    accept_dist = false;
+    accept_dist_spec = "";
+    perturb_slack = false;
+    perturb_slack_delta = 0.0;
+    perturb_slack_anneal = false;
 #ifdef USING_PLL
     pll = true;
 #else

@@ -317,7 +317,8 @@ string buildRunId(int radius, int maxSteps, bool randomStart,
 string buildRecordTag(bool useFastSelection, bool useDistanceRadius, bool reoptimizeBranchLengths,
         int fullReoptEveryNSteps, bool investigateFlag, int investigateRadius, bool alternateFlag,
         bool shrinkFlag, bool learnradiusFlag, bool sweepFlag, int sweepCount, int findoptEveryNSteps,
-        bool noTrueTree, bool weightpruneFlag);
+        bool noTrueTree, bool weightpruneFlag, bool tunnelFlag = false, double tunnelTolerance = 0.0,
+        bool slackFlag = false, double slackDelta = 0.0, bool slackAnneal = false);
 
 string recordSpreadsheetPath(const string &modelName, const string &recordTag);
 
@@ -384,6 +385,64 @@ bool computeSiblingCompatibilityScore(PhyloTree &tree, PhyloNode *p, PhyloNode *
     the IQ-TREE-side parser rejects them outright. See parseRefineSpec
     at the bottom of this header.
  */
+/**
+    Stochastic acceptance rule: the probability of KEEPING a move, given the
+    log-likelihood change it produces.
+
+    Shape of the rule, for delta = newScore - curScore:
+
+        delta >= 0            P = 1          (never refuse an improvement)
+        delta <  0            P = exp(-(|delta| / T)^shape)
+
+    so the whole (-inf, 0) side is a smooth, tunable curve and the [0, inf)
+    side is flat at 1. T ("temperature") sets the scale of a tolerable loss
+    and `shape` sets how sharply the curve falls off past it:
+
+        shape = 1    Boltzmann / classic Metropolis -- P = exp(-|delta|/T)
+        shape = 2    Gaussian-like: near-1 well inside T, then a fast cliff
+        shape -> inf a hard threshold at |delta| = T, i.e. exactly what the
+                     "slack" perturbation rule does, which makes slack the
+                     limiting case of this same family rather than a
+                     separate idea
+
+    ANNEALING. With `anneal`, T is scaled by (1 - progress) as the run
+    advances, floored at `tempFloor`. Progress is supplied by the caller
+    (steps/budget for a continuous SPR stage, iteration/min_iterations for
+    the iterated search), so this struct stays agnostic about what is
+    being counted. At T = 0 the rule degenerates to strict hill-climbing,
+    which is why annealing to a floor of 0 is the sensible default: the run
+    ends as a pure hill-climb no matter how exploratory it started.
+
+    WHY THE DEFAULT T IS SMALL. The default (0.5) is chosen for final
+    convergence rather than exploration: a move 0.5 logL worse is kept with
+    P = 0.37, one 2 logL worse with P = 0.018, and one 5 logL worse with
+    P = 4.5e-5. That admits the small backward steps that let a search
+    round a barrier while making a genuinely destructive move essentially
+    impossible. Raise T for a more exploratory run.
+ */
+struct AcceptDist {
+    bool enabled;
+    double temperature;            // T, the scale of a tolerable loss
+    double shape;                  // exponent; 1 = Boltzmann
+    bool anneal;                   // decay T toward tempFloor over the run
+    double tempFloor;              // lowest T annealing may reach
+
+    AcceptDist();
+
+    /** T after annealing, for progress in [0, 1]. */
+    double effectiveTemperature(double progress) const;
+
+    /** P(keep) for this delta. Always 1 for delta >= 0. */
+    double probability(double delta, double progress) const;
+
+    /**
+        Draw against probability(). Returns true for every improvement
+        without consuming a random number, so an improve-only search under
+        this rule stays bit-identical to one without it.
+     */
+    bool accept(double delta, double progress) const;
+};
+
 struct SPRSearchOptions {
     // --- candidate generation ---
     int radius;                    // <radius>: hop count, or (distradius) percent of tree length
@@ -417,6 +476,80 @@ struct SPRSearchOptions {
     bool escapeFlag;
     int escapeSpan;                // non-improving steps that trigger a kick
     int escapeTries;               // steps allowed to beat the saved score
+
+    /**
+     *  "tunnel TOL [K]" -- do not roll back a MARGINALLY worse move
+     *  immediately. When the step's best candidate loses no more than TOL
+     *  log-likelihood, keep it applied and probe up to K random follow-up
+     *  moves, ONE AT A TIME, testing whether the pair together beats the
+     *  score the tree had before the first move. Each failed probe is
+     *  rolled back on its own (a partial rollback, leaving the tolerated
+     *  first move in place) so the next probe starts from the same
+     *  tolerated position; only if every probe fails does the first move
+     *  get rolled back too.
+     *
+     *  The point is that plain best-improvement SPR can only cross a
+     *  barrier if some single move improves. A pair of moves whose first
+     *  half is slightly downhill is invisible to it. TOL bounds how far
+     *  downhill the search will step on spec, so the walk stays anchored
+     *  near the incumbent instead of drifting: nothing is ever KEPT unless
+     *  it beats the pre-move score outright.
+     *
+     *  Distinct from "escape", which kicks only after a stall and rolls
+     *  the whole excursion back as a unit. This fires on an ordinary
+     *  rejected step, costs at most K extra evaluations, and commits only
+     *  a strict improvement.
+     */
+    bool tunnelFlag;
+    double tunnelTolerance;        // max permissible logL decrease, > 0
+    int tunnelTries;               // random follow-up probes, default 3
+
+    /**
+     *  "slack D [anneal]" -- threshold accepting. Lower the bar for what
+     *  counts as an acceptable move: keep any candidate scoring above
+     *  (curScore - D) instead of requiring a strict improvement. This is
+     *  the general form of what "tunnel" does in a special case -- tunnel
+     *  tolerates one downhill move only while a paired follow-up is being
+     *  tested and never keeps it alone, whereas slack simply walks
+     *  downhill whenever the step is small enough.
+     *
+     *  With "anneal", D decays linearly to 0 across the run's whole step
+     *  budget (stepsPerPass), so the search starts exploratory and ends as
+     *  a strict hill-climb. Without it, D is constant for the whole run.
+     *
+     *  This applies to the PERTURBATION only, never to refinement. A kick
+     *  is supposed to move the tree somewhere worse; the point of slack is
+     *  to bound HOW MUCH worse, so the perturbation lands in a nearby
+     *  basin the refinement can still work with instead of anywhere at
+     *  all. The refinement stage keeps its strict improve-only rule, so
+     *  nothing downhill can survive into the reported tree.
+     *
+     *  Contrast --spr-perturb without it: moves are applied blind, with no
+     *  score consulted, so a kick's damage is unbounded. Contrast "tunnel":
+     *  that tolerates a downhill move inside the hill-climb, and only
+     *  while a paired follow-up is being tested.
+     */
+    bool slackFlag;
+    double slackDelta;             // permitted logL decrease, > 0
+    bool slackAnneal;              // decay slackDelta to 0 over the budget
+
+    /**
+     *  --accept-dist: the stochastic acceptance rule applied to REFINEMENT
+     *  moves (see AcceptDist). Disabled by default, in which case every
+     *  refiner keeps its strict improve-only behaviour unchanged.
+     */
+    AcceptDist acceptDist;
+
+    /**
+     *  Annealing progress supplied by the CALLER, in [0, 1]. A continuous
+     *  stage measures its own progress in steps against "steps N", but the
+     *  iterated search has no step budget to measure against -- its clock
+     *  is the iteration count, which only IQTree knows. It sets this each
+     *  iteration so the cooling schedule advances in both modes; without
+     *  it an in-loop SPR refinement would sit at the starting temperature
+     *  forever and never converge.
+     */
+    double acceptProgressBase;
 
     // --- phases ---
     bool sweepFlag;                // "sweep"
@@ -462,6 +595,54 @@ struct SPRSearchState {
 
     // running totals across every pass
     long candidatesEvaluated;
+
+    /**
+     *  "tunnel" accounting, reported at the end of a run: how many rejected
+     *  steps were marginal enough to probe from, how many probe evaluations
+     *  that cost, and how many of those excursions actually cleared the
+     *  barrier. A large tunnelEntered with tunnelCommitted near zero means
+     *  the flag is pure overhead on this data.
+     */
+    long tunnelEntered;
+    long tunnelProbes;
+    long tunnelCommitted;
+
+    /**
+     *  "slack" bookkeeping, accumulated across every kick in the run:
+     *  slackAccepted counts perturbation moves actually applied,
+     *  slackRejected counts proposals refused for costing more than the
+     *  current threshold, and slackKicks counts kicks performed. The ratio
+     *  of the first two says whether the threshold is doing any filtering
+     *  at all -- if nothing is ever rejected, slack is just a slower way
+     *  to write --spr-perturb.
+     */
+    long slackAccepted;
+    long slackRejected;
+    long slackKicks;
+    double slackLastDelta;
+
+    /**
+     *  AcceptDist bookkeeping: how many moves were kept ONLY because the
+     *  stochastic rule admitted them (a strict hill-climb would have
+     *  refused), how many downhill moves were offered to it in total, and
+     *  the last effective temperature used. acceptedDownhill near zero
+     *  against a large offeredDownhill means the temperature is too cold
+     *  to be doing anything.
+     */
+    long acceptedDownhill;
+    long offeredDownhill;
+    double lastTemperature;
+
+    /**
+     *  High-water mark for a stochastic run. Accepting downhill moves lets
+     *  the CURRENT tree drift below the best one seen, so the best
+     *  topology is remembered here and restored before the result is
+     *  reported -- without this the run would report wherever the walk
+     *  happened to stop.
+     */
+    double bestSeenScore;
+    string bestSeenTree;
+    bool bestSeenRestored;
     long successfulSteps;
     int stepsRun;                   // total steps attempted, for findopt's cadence
 
@@ -573,7 +754,8 @@ bool parsePerturbSpec(const string &spec, SPRSearchOptions &opt, string &err);
     landed (fewer than asked only if the topology runs out of legal prune
     or graft positions).
  */
-int doRandomSPRs(PhyloTree &tree, const SPRSearchOptions &opt, int numMoves);
+int doRandomSPRs(PhyloTree &tree, const SPRSearchOptions &opt, int numMoves,
+        SPRSearchState *st = nullptr, double annealScale = 1.0);
 
 /**
     the record CSV's own tag for one refinement configuration, e.g.

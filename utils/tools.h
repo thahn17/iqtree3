@@ -836,6 +836,37 @@ public:
      */
     string refine_spec;
 
+    /**
+     *  --accept-dist "<spec>": replace the refinement's strict improve-only
+     *  rule with a stochastic one -- see sprsearch.h's AcceptDist. A move
+     *  losing |d| log-likelihood is kept with probability
+     *  exp(-(|d|/T)^shape); an improvement is always kept.
+     *
+     *  Giving this flag also SUPPRESSES the perturbation stage entirely.
+     *  The two are alternative ways to leave a local optimum -- a kick
+     *  jumps out and climbs back, whereas this walks out one tolerated
+     *  step at a time -- and running both at once would make it impossible
+     *  to attribute an escape to either. See Params::accept_dist_spec for
+     *  the spec vocabulary.
+     *
+     *  Works with the NNI refiner and the SPR refiner alike: the rule is
+     *  applied at each one's own accept/reject point.
+     */
+    bool accept_dist;
+    string accept_dist_spec;
+
+    /**
+     *  --perturb-slack D [anneal]: bound how far a single PERTURBATION move
+     *  may drive the tree downhill, whichever kick is in use. This is the
+     *  kick-agnostic spelling of --spr-perturb's own "slack" flag, and the
+     *  only way to get the behaviour with IQ-TREE's default NNI kick.
+     */
+    bool perturb_slack;
+    double perturb_slack_delta;
+    bool perturb_slack_anneal;
+
+
+
 
 	/**
 	 *  logl epsilon for model parameter optimization

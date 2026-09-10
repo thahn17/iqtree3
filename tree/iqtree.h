@@ -471,6 +471,7 @@ public:
      */
     void doRandomSPRs();
 
+
     /**
      *      Parse Params::refine_spec and set up whatever the chosen
      *      refinement mode needs (SPRSearchOptions, and the record CSV's
@@ -479,6 +480,14 @@ public:
      *      work starts rather than at the first perturbation.
      */
     void initRefinement(Params &params);
+
+    /**
+     *      Write one line per finished run to <prefix>.searchstats.txt: the
+     *      configuration that ran and what it achieved. Exists so a sweep
+     *      can be tabulated without re-parsing IQ-TREE's human-readable log,
+     *      which is the only other place these numbers appear.
+     */
+    void writeSearchStats();
 
     /**
      *      Build the record/trajectory file identity (run id, tag, model
@@ -648,6 +657,24 @@ public:
      *  steps it counts in spr_topology_test.
      */
     int refine_kick_count;
+
+    /**
+     *  --accept-dist's rule, shared by both refiners. Parsed once in
+     *  initRefinement; disabled by default, in which case every accept
+     *  decision keeps its original strict-improvement behaviour.
+     */
+    sprsearch::AcceptDist accept_dist;
+
+    /**
+     *  Fraction of the run already elapsed, in [0, 1], for the annealing
+     *  schedule: iteration count against params->min_iterations. Refreshed
+     *  once per iteration in doTreeSearch so both refiners read a single
+     *  consistent value rather than each deriving its own.
+     */
+    double accept_progress;
+
+
+
 
     /**
      *  Vector contains number of NNIs used at each iterations

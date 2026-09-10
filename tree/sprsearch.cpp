@@ -1702,7 +1702,8 @@ string buildRunId(int radius, int maxSteps, bool randomStart,
 string buildRecordTag(bool useFastSelection, bool useDistanceRadius, bool reoptimizeBranchLengths,
         int fullReoptEveryNSteps, bool investigateFlag, int investigateRadius, bool alternateFlag,
         bool shrinkFlag, bool learnradiusFlag, bool sweepFlag, int sweepCount, int findoptEveryNSteps,
-        bool noTrueTree, bool weightpruneFlag) {
+        bool noTrueTree, bool weightpruneFlag, bool tunnelFlag, double tunnelTolerance,
+        bool slackFlag, double slackDelta, bool slackAnneal) {
     ostringstream tag;
     if (useFastSelection)
         tag << "_fast";
@@ -1728,6 +1729,25 @@ string buildRecordTag(bool useFastSelection, bool useDistanceRadius, bool reopti
         tag << "_notree";
     if (weightpruneFlag)
         tag << "_weightprune";
+    // Tolerance is part of the identity, not just the flag: "tunnel 0.5" and
+    // "tunnel 20" are different searches and must not share a record file.
+    // '.' would break the "_"-delimited tag convention, so it becomes 'p'.
+    if (slackFlag) {
+        ostringstream d;
+        d << slackDelta;
+        string t = d.str();
+        for (size_t i = 0; i < t.size(); i++)
+            if (t[i] == '.') t[i] = 'p';
+        tag << "_slack" << t << (slackAnneal ? "anneal" : "");
+    }
+    if (tunnelFlag) {
+        ostringstream tol;
+        tol << tunnelTolerance;
+        string t = tol.str();
+        for (size_t i = 0; i < t.size(); i++)
+            if (t[i] == '.') t[i] = 'p';
+        tag << "_tunnel" << t;
+    }
     return tag.str();
 }
 
@@ -2652,12 +2672,57 @@ bool computeSiblingCompatibilityScore(PhyloTree &tree, PhyloNode *p, PhyloNode *
     Re-entrant driver -- see tree/sprsearch.h for the design.
  *========================================================================*/
 
+AcceptDist::AcceptDist()
+        : enabled(false), temperature(0.5), shape(1.0), anneal(false), tempFloor(0.0) {
+}
+
+double AcceptDist::effectiveTemperature(double progress) const {
+    if (!anneal)
+        return temperature;
+    if (progress < 0.0) progress = 0.0;
+    if (progress > 1.0) progress = 1.0;
+    double t = temperature * (1.0 - progress);
+    return (t < tempFloor) ? tempFloor : t;
+}
+
+double AcceptDist::probability(double delta, double progress) const {
+    if (!enabled)
+        return (delta > 0.0) ? 1.0 : 0.0;
+    if (delta >= 0.0)
+        return 1.0;                      // an improvement is never refused
+    double t = effectiveTemperature(progress);
+    if (t <= 0.0)
+        return 0.0;                      // frozen: strict hill-climbing
+    double x = -delta / t;               // > 0, since delta < 0
+    if (shape != 1.0)
+        x = pow(x, shape);
+    if (x > 700.0)
+        return 0.0;                      // exp() would underflow anyway
+    return exp(-x);
+}
+
+bool AcceptDist::accept(double delta, double progress) const {
+    // Improvements short-circuit WITHOUT drawing, so enabling this rule
+    // does not perturb the random stream for moves that would have been
+    // kept regardless -- an improve-only run stays reproducible.
+    if (delta > 0.0)
+        return true;
+    if (!enabled)
+        return false;
+    double p = probability(delta, progress);
+    if (p <= 0.0)
+        return false;
+    return random_double() < p;
+}
+
 SPRSearchOptions::SPRSearchOptions()
         : radius(6), useFastSelection(false), numCandidates(1), useDistanceRadius(false),
           weightpruneFlag(PRUNE_UNIFORM), alternateFlag(false), investigateFlag(false), investigateRadius(1),
           shrinkFlag(false), shrinkStallThreshold(10), learnradiusFlag(false), learnradiusN(20),
           reoptimizeBranchLengths(false), fullReoptEveryNSteps(0), fullReoptRounds(100),
           escapeFlag(false), escapeSpan(0), escapeTries(0),
+          tunnelFlag(false), tunnelTolerance(0.0), tunnelTries(3),
+          slackFlag(false), slackDelta(0.0), slackAnneal(false), acceptProgressBase(0.0),
           useGtrModel(false), sweepFlag(false), sweepCount(10), findoptFlag(false),
           findoptEveryNSteps(0), quiet(false), recordProgress(false), recordTopology(false),
           trajectoryFlag(false), noTrueTree(true), stepsPerPass(0) {
@@ -2666,7 +2731,11 @@ SPRSearchOptions::SPRSearchOptions()
 SPRSearchState::SPRSearchState()
         : cpuClockStart(0.0), trueTreeLogl(std::numeric_limits<double>::quiet_NaN()),
           trueTreeLoglForFindopt(std::numeric_limits<double>::quiet_NaN()),
-          candidatesEvaluated(0), successfulSteps(0), stepsRun(0),
+          candidatesEvaluated(0), tunnelEntered(0), tunnelProbes(0), tunnelCommitted(0),
+          slackAccepted(0), slackRejected(0), slackKicks(0), slackLastDelta(0.0),
+          acceptedDownhill(0), offeredDownhill(0), lastTemperature(0.0),
+          bestSeenScore(-DBL_MAX), bestSeenRestored(false),
+          successfulSteps(0), stepsRun(0),
           learnRadiusMaxPath(0.0), learnRadiusExcursionOpen(false), learnRadiusAnchorA(nullptr),
           learnRadiusAnchorB(nullptr), learnRadiusFinalNode(nullptr), investigateNext(false),
           investigatePruneNode(nullptr), investigatePruneDad(nullptr),
@@ -2713,8 +2782,31 @@ void beginSPRSearchPass(SPRSearchState &st) {
 double runSPRSteps(PhyloTree &tree, EdgeRegistry &reg, const SPRSearchOptions &opt, SPRSearchState &st,
         double curScore, int maxSteps, Alignment *aln, Params &params,
         SPRLocalLhCache *localCache, const string &stepLabelPrefix) {
+    // --accept-dist: seed the high-water mark from where this call
+    // starts, so a stage that only ever loses ground still reports the tree
+    // it began with rather than the endpoint of a downhill walk.
+    if (opt.acceptDist.enabled && curScore > st.bestSeenScore) {
+        st.bestSeenScore = curScore;
+        st.bestSeenTree = tree.getTreeString();
+    }
+
     int step = 0;
     for (; step < maxSteps; step++) {
+        // Annealing progress for the acceptance rule. Measured against the
+        // whole run's budget (stepsPerPass), not this block's maxSteps: the
+        // continuous stage calls this in blocks, and a per-block schedule
+        // would restart the cooling curve every block.
+        // Prefer this pass's own step budget when there is one; fall back
+        // to whatever progress the caller reports otherwise, so an in-loop
+        // refinement (which has no step budget) still cools.
+        double acceptProgress = opt.acceptProgressBase;
+        if (opt.acceptDist.enabled && opt.acceptDist.anneal && opt.stepsPerPass > 0) {
+            acceptProgress = (double) (st.stepsRun + step) / (double) opt.stepsPerPass;
+        }
+        if (acceptProgress > 1.0)
+            acceptProgress = 1.0;
+        if (acceptProgress < 0.0)
+            acceptProgress = 0.0;
         int stepRadius = opt.radius;
         // stepRadiusContinuous mirrors stepRadius, except it's allowed to
         // stay fractional -- only actually diverges from (double)stepRadius
@@ -2965,7 +3057,7 @@ double runSPRSteps(PhyloTree &tree, EdgeRegistry &reg, const SPRSearchOptions &o
             if (std::isfinite(realScore))
                 bestScore = realScore;
             recomputedAppliedTopology = true;
-        } else if (bestScore > curScore) {
+        } else if (bestScore > curScore || opt.acceptDist.enabled) {
             // The local score is sufficient to reject a non-improving
             // proposal without touching the baseline cache. For a proposed
             // improvement, recompute the winner once from scratch before
@@ -2979,6 +3071,20 @@ double runSPRSteps(PhyloTree &tree, EdgeRegistry &reg, const SPRSearchOptions &o
         }
 
         bool improved = bestScore > curScore;
+        // --accept-dist: a losing move may still be kept, with probability
+        // set by the rule. `improved` keeps meaning a genuine gain, since
+        // shrink's stall counter and learnradius's excursion bookkeeping
+        // both key off real progress and would be corrupted by counting a
+        // downhill step as one.
+        bool accepted = improved;
+        if (!improved && opt.acceptDist.enabled && std::isfinite(bestScore)) {
+            st.offeredDownhill++;
+            st.lastTemperature = opt.acceptDist.effectiveTemperature(acceptProgress);
+            if (opt.acceptDist.accept(bestScore - curScore, acceptProgress)) {
+                accepted = true;
+                st.acceptedDownhill++;
+            }
+        }
         if (opt.shrinkFlag)
             maybeShrinkRadius(improved, opt.shrinkStallThreshold, opt.quiet,
                     st.shrinkStallCount, st.shrinkCurrentRadius);
@@ -2988,11 +3094,18 @@ double runSPRSteps(PhyloTree &tree, EdgeRegistry &reg, const SPRSearchOptions &o
                  << " -> graft {" << describeEdgeCompact(bestNode, bestDad) << "}"
                  << " (" << ((opt.useFastSelection && !investigatingThisStep) ? "d=" : "distance ") << bestDistance << ")"
                  << ", logL " << bestScore << " (cur " << curScore << ")"
-                 << (improved ? " [kept]" : " [reverted]") << endl;
+                 << (improved ? " [kept]" : (accepted ? " [kept: accept-dist]" : " [reverted]")) << endl;
 
-        if (improved) {
+        if (accepted) {
             curScore = bestScore;
-            if (opt.learnradiusFlag) {
+            // --accept-dist walks downhill, so the walk's endpoint is
+            // routinely worse than the best tree it passed through. Keep
+            // that high-water mark; runSPRSteps restores it on the way out.
+            if (opt.acceptDist.enabled && curScore > st.bestSeenScore) {
+                st.bestSeenScore = curScore;
+                st.bestSeenTree = tree.getTreeString();
+            }
+            if (improved && opt.learnradiusFlag) {
                 if (opt.investigateFlag) {
                     // see learnradiusFlag's comment on runHillClimb: a
                     // "investigate"-chained excursion is measured as ONE
@@ -3021,7 +3134,7 @@ double runSPRSteps(PhyloTree &tree, EdgeRegistry &reg, const SPRSearchOptions &o
                     recordLearnRadiusSample(st.learnRadiusWindow, opt.learnradiusN, bestAchievedRadiusForLearning);
                 }
             }
-            if (opt.investigateFlag) {
+            if (improved && opt.investigateFlag) {
                 // this move -- whether it came from a fresh choosePrune or
                 // from investigating a previous one -- just improved the
                 // tree, so refine IT one real hop further next step; see
@@ -3050,6 +3163,92 @@ double runSPRSteps(PhyloTree &tree, EdgeRegistry &reg, const SPRSearchOptions &o
             maybeRunPeriodicFullReopt(tree, st.successfulSteps, opt.fullReoptEveryNSteps, opt.fullReoptRounds, opt.useGtrModel,
                     opt.quiet, opt.recordProgress, opt.recordTopology, st.modelName, st.recordTag, st.runId, st.candidatesEvaluated,
                     st.cpuClockStart, st.trueTreeLogl, curScore);
+        } else if (opt.tunnelFlag && std::isfinite(bestScore)
+                   && (curScore - bestScore) <= opt.tunnelTolerance) {
+            // "tunnel": this move is worse, but only marginally. Keep it
+            // applied and probe random follow-ups one at a time, looking
+            // for a PAIR that beats curScore. Nothing is kept unless it
+            // strictly improves on where the tree already was, so a
+            // tolerated first move can never leak into the result on its
+            // own.
+            st.tunnelEntered++;
+            bool committed = false;
+            for (int probe = 0; probe < opt.tunnelTries && !committed; probe++) {
+                PhyloNode *pNode, *pDad;
+                if (!choosePrune(tree, reg, pNode, pDad, opt.weightpruneFlag))
+                    break;
+                PhyloNode *gNode, *gDad;
+                bool found = opt.useDistanceRadius
+                    ? chooseGraftByDistance(tree, pNode, pDad, (double) opt.radius,
+                            gNode, gDad, nullptr, nullptr)
+                    : chooseGraft(tree, pNode, pDad, opt.radius, gNode, gDad, nullptr);
+                if (!found)
+                    continue;
+
+                SPRMove probeMove;
+                probeMove.prune_node = pNode;
+                probeMove.prune_dad = pDad;
+                probeMove.regraft_node = gNode;
+                probeMove.regraft_dad = gDad;
+                probeMove.radius = 0;
+                probeMove.screening_score = 0.0;
+                probeMove.exact_score = 0.0;
+                probeMove.candidate_id = 0;
+                probeMove.generation = step;
+
+                TrackedSPR probeTracked;
+                applySPRTracked(tree, reg, probeMove, probeTracked);
+                if (opt.reoptimizeBranchLengths) {
+                    resetLikelihoodBuffers(tree);
+                    reoptimizeSPREdges(tree, probeMove.prune_dad, probeMove.regraft_dad,
+                            probeMove.regraft_node, probeMove.prune_node,
+                            probeTracked.sibling1, probeTracked.sibling2);
+                }
+                resetLikelihoodBuffers(tree);
+                double pairScore = tree.computeLikelihood();
+                st.candidatesEvaluated++;
+                st.tunnelProbes++;
+
+                if (std::isfinite(pairScore) && pairScore > curScore) {
+                    // the pair as a whole is an improvement -- commit both
+                    if (!opt.quiet)
+                        cout << stepLabelPrefix << "  tunnel: probe " << (probe + 1)
+                             << " cleared the barrier, logL " << pairScore
+                             << " (was " << curScore << ", via "
+                             << (curScore - bestScore) << " downhill)" << endl;
+                    curScore = pairScore;
+                    committed = true;
+                    st.tunnelCommitted++;
+                    if (opt.recordProgress)
+                        appendRecordRow(st.modelName, st.recordTag, st.runId, st.candidatesEvaluated,
+                                getCPUTime() - st.cpuClockStart, curScore, st.trueTreeLogl,
+                                opt.recordTopology, tree);
+                    if (opt.trajectoryFlag)
+                        appendTrajectoryTopology(st.runId, tree);
+                    st.successfulSteps++;
+                    maybeRunPeriodicFullReopt(tree, st.successfulSteps, opt.fullReoptEveryNSteps,
+                            opt.fullReoptRounds, opt.useGtrModel, opt.quiet, opt.recordProgress,
+                            opt.recordTopology, st.modelName, st.recordTag, st.runId,
+                            st.candidatesEvaluated, st.cpuClockStart, st.trueTreeLogl, curScore);
+                } else {
+                    // PARTIAL rollback: undo only this probe, leaving the
+                    // tolerated first move in place so the next probe
+                    // starts from the same position. Rollbacks are LIFO, so
+                    // the probe must come off before bestTracked can.
+                    rollbackSPRTracked(tree, reg, probeTracked);
+                }
+            }
+            if (!committed) {
+                rollbackSPRTracked(tree, reg, bestTracked);
+                maybeFinalizeLearnRadiusExcursion(tree, opt.useDistanceRadius, st.learnRadiusExcursionOpen,
+                        st.learnRadiusAnchorA, st.learnRadiusAnchorB, st.learnRadiusFinalNode, pruneDad,
+                        st.learnRadiusWindow, opt.learnradiusN);
+            }
+            // Either path left the tree topologically settled but its
+            // likelihood buffers dirty from the probing above; the next
+            // step's local scoring reads that cache as its baseline.
+            resetLikelihoodBuffers(tree);
+            tree.computeLikelihood();
         } else {
             rollbackSPRTracked(tree, reg, bestTracked);
             if (recomputedAppliedTopology) {
@@ -3315,9 +3514,10 @@ bool parsePerturbSpec(const string &spec, SPRSearchOptions &opt, string &err) {
     // A perturbation is a handful of random moves, not a search, so only
     // the flags that describe a MOVE mean anything: how far it reaches
     // (radius, distradius) and which edge it prunes (weightprune). There
-    // is nothing to score, nothing to accept or reject, and nothing to
     // record -- the refinement stage that follows owns all of that -- so
-    // every other flag is refused rather than silently ignored.
+    // every other flag is refused rather than silently ignored. The one
+    // exception is "slack", which DOES score each draw, precisely so a
+    // kick's damage can be bounded; see SPRSearchOptions::slackFlag.
     opt = SPRSearchOptions();
     opt.noTrueTree = true;
     // a perturbation always draws its target by random walk; the
@@ -3335,6 +3535,28 @@ bool parsePerturbSpec(const string &spec, SPRSearchOptions &opt, string &err) {
         }
         if (t == "distradius") {
             opt.useDistanceRadius = true;
+            continue;
+        }
+        if (t == "slack") {
+            // "slack D [anneal]": bound this kick's damage to D
+            // log-likelihood per move rather than applying moves blind. D
+            // must be positive; a zero threshold would refuse every
+            // downhill draw, which is not a perturbation at all.
+            if (i + 1 >= tok.size()) {
+                err = "\"slack\" needs a delta, e.g. \"slack 1\" or \"slack 5 anneal\"";
+                return false;
+            }
+            opt.slackFlag = true;
+            i++;
+            opt.slackDelta = atof(tok[i].c_str());
+            if (opt.slackDelta <= 0.0) {
+                err = "\"slack\" delta must be positive (got " + tok[i] + ")";
+                return false;
+            }
+            if (i + 1 < tok.size() && tok[i + 1] == "anneal") {
+                opt.slackAnneal = true;
+                i++;
+            }
             continue;
         }
         if (t == "weightprune") {
@@ -3357,7 +3579,8 @@ bool parsePerturbSpec(const string &spec, SPRSearchOptions &opt, string &err) {
     return true;
 }
 
-int doRandomSPRs(PhyloTree &tree, const SPRSearchOptions &opt, int numMoves) {
+int doRandomSPRs(PhyloTree &tree, const SPRSearchOptions &opt, int numMoves,
+        SPRSearchState *st, double annealScale) {
     // The SPR counterpart of IQTree::doRandomNNIs: apply `numMoves` random,
     // legal SPR moves and keep none of the scoring machinery -- a kick is
     // supposed to make the tree worse, so nothing here is evaluated,
@@ -3367,7 +3590,28 @@ int doRandomSPRs(PhyloTree &tree, const SPRSearchOptions &opt, int numMoves) {
     EdgeRegistry reg;
     buildEdgeRegistry(tree, reg);
 
+    // "slack": the kick stops being blind. Every proposal is scored and
+    // kept only if it costs at most `delta` log-likelihood; anything worse
+    // is rolled back and the slot redrawn. This bounds how far a kick can
+    // damage the tree, instead of letting numMoves blind moves carry it
+    // arbitrarily far from the basin the refinement has to climb back up.
+    double delta = 0.0;
+    double curScore = 0.0;
+    const int maxDrawsPerMove = 8;
+    if (opt.slackFlag) {
+        delta = opt.slackDelta * (opt.slackAnneal ? annealScale : 1.0);
+        if (delta < 0.0)
+            delta = 0.0;
+        resetLikelihoodBuffers(tree);
+        curScore = tree.computeLikelihood();
+        if (st) {
+            st->slackKicks++;
+            st->slackLastDelta = delta;
+        }
+    }
+
     int applied = 0;
+    int redraws = 0;
     for (int i = 0; i < numMoves; i++) {
         PhyloNode *pruneNode, *pruneDad;
         if (!choosePrune(tree, reg, pruneNode, pruneDad, opt.weightpruneFlag))
@@ -3398,7 +3642,36 @@ int doRandomSPRs(PhyloTree &tree, const SPRSearchOptions &opt, int numMoves) {
         // perturbation never rolls back.
         TrackedSPR tracked;
         applySPRTracked(tree, reg, move, tracked);
+
+        if (opt.slackFlag) {
+            resetLikelihoodBuffers(tree);
+            double newScore = tree.computeLikelihood();
+            if (std::isfinite(newScore) && newScore > curScore - delta) {
+                curScore = newScore;
+                if (st) st->slackAccepted++;
+                redraws = 0;
+            } else {
+                // costs more than the threshold allows -- undo it and
+                // redraw this slot, up to a bounded number of attempts so a
+                // tight delta cannot spin here forever
+                rollbackSPRTracked(tree, reg, tracked);
+                if (st) st->slackRejected++;
+                if (redraws < maxDrawsPerMove) {
+                    redraws++;
+                    i--;            // slot not filled yet; try again
+                }
+                else {
+                    redraws = 0;    // give up on this slot, move on
+                }
+                continue;
+            }
+        }
         applied++;
+    }
+    if (opt.slackFlag) {
+        // leave the buffers consistent with the tree the caller now holds
+        resetLikelihoodBuffers(tree);
+        tree.computeLikelihood();
     }
     return applied;
 }
@@ -3530,6 +3803,66 @@ bool parseRefineSpec(const string &spec, bool sprMode, SPRSearchOptions &opt, st
             takeOptionalInt(tok, i, opt.sweepCount);
             continue;
         }
+        if (t == "slack") {
+            err = "\"slack\" bounds how far a PERTURBATION may go downhill, "
+                  "so it belongs to --spr-perturb rather than the refinement spec";
+            return false;
+        }
+        if (t == "acceptdist") {
+            // "acceptdist [temp T] [shape S] [anneal] [floor F]" -- the same
+            // rule --accept-dist configures, spellable inside a refine spec
+            // so a single string can carry the whole search configuration.
+            opt.acceptDist.enabled = true;
+            while (i + 1 < tok.size()) {
+                const string &n = tok[i + 1];
+                if (n == "temp" && i + 2 < tok.size()) {
+                    opt.acceptDist.temperature = atof(tok[i + 2].c_str());
+                    i += 2;
+                } else if (n == "shape" && i + 2 < tok.size()) {
+                    opt.acceptDist.shape = atof(tok[i + 2].c_str());
+                    i += 2;
+                } else if (n == "floor" && i + 2 < tok.size()) {
+                    opt.acceptDist.tempFloor = atof(tok[i + 2].c_str());
+                    i += 2;
+                } else if (n == "anneal") {
+                    opt.acceptDist.anneal = true;
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if (opt.acceptDist.temperature <= 0.0) {
+                err = "\"acceptdist\" temperature must be positive";
+                return false;
+            }
+            if (opt.acceptDist.shape <= 0.0) {
+                err = "\"acceptdist\" shape must be positive";
+                return false;
+            }
+            continue;
+        }
+        if (t == "tunnel") {
+            // "tunnel TOL [K]": TOL is required (a tolerance of 0 would
+            // make the flag a no-op that still costs probe evaluations),
+            // K optional.
+            if (i + 1 >= tok.size()) {
+                err = "\"tunnel\" needs a tolerance, e.g. \"tunnel 2\" or \"tunnel 2 5\"";
+                return false;
+            }
+            opt.tunnelFlag = true;
+            i++;
+            opt.tunnelTolerance = atof(tok[i].c_str());
+            if (opt.tunnelTolerance <= 0.0) {
+                err = "\"tunnel\" tolerance must be positive (got " + tok[i] + ")";
+                return false;
+            }
+            takeOptionalInt(tok, i, opt.tunnelTries);
+            if (opt.tunnelTries < 1) {
+                err = "\"tunnel\" probe count must be at least 1";
+                return false;
+            }
+            continue;
+        }
         if (t == "escape") {
             // both numbers required, same convention as "fullreopt M N"
             opt.escapeFlag = true;
@@ -3587,7 +3920,8 @@ string buildRefineRecordTag(const SPRSearchOptions &opt, bool sprMode) {
     return "_spr" + string(opt.escapeFlag ? "_escape" : "") + buildRecordTag(opt.useFastSelection, opt.useDistanceRadius, opt.reoptimizeBranchLengths,
             opt.fullReoptEveryNSteps, opt.investigateFlag, opt.investigateRadius, opt.alternateFlag,
             opt.shrinkFlag, opt.learnradiusFlag, opt.sweepFlag, opt.sweepCount, opt.findoptEveryNSteps,
-            false, opt.weightpruneFlag != PRUNE_UNIFORM)
+            false, opt.weightpruneFlag != PRUNE_UNIFORM, opt.tunnelFlag, opt.tunnelTolerance,
+            opt.slackFlag, opt.slackDelta, opt.slackAnneal)
             + (opt.weightpruneFlag == PRUNE_SHORT ? "short" : "");
 }
 
