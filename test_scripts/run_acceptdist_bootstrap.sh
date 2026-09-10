@@ -46,6 +46,15 @@
 #
 set -u
 
+# --summary-only / SUMMARY_ONLY=1: print the pooled table over whatever trials
+# already exist and exit WITHOUT running or generating anything. The wrapper
+# job calls this during wrap-up, where accidentally starting a fresh trial
+# would be actively harmful.
+SUMMARY_ONLY="${SUMMARY_ONLY:-0}"
+for _a in "$@"; do
+  [ "$_a" = "--summary-only" ] && SUMMARY_ONLY=1
+done
+
 # ----------------------------------------------------------------- config --
 IQ="${IQ:-C:/Users/tinst/Desktop/iqtree3/build/iqtree3.exe}"
 SRCALN="${SRCALN:-C:/Users/tinst/Desktop/iqtree3/covid_data/covid_500.fasta}"
@@ -91,6 +100,9 @@ ADVARIANTS=(
   "ad2s2a|temp 2 shape 2 anneal"
 )
 
+if [ "$SUMMARY_ONLY" = "1" ]; then
+  cd "$BASEDIR" 2>/dev/null || { echo "no results directory at $BASEDIR"; exit 0; }
+else
 mkdir -p "$OUTDIR" "$ALNDIR"
 
 # ------------------------------------------------- bootstrap alignments ----
@@ -217,9 +229,13 @@ for r in $(seq 1 "$REPS"); do
   done
 done
 
+fi   # end of the acting section; the summaries below also run under
+     # --summary-only
+
 # ---------------------------------------------------------------- summary --
 # Built from the .searchstats.txt files rather than by scraping the logs, so a
 # reworded log message cannot silently break the table.
+if [ "$SUMMARY_ONLY" != "1" ]; then
 echo "=== SUMMARY (trial $TRIAL) ==="
 python - <<'PYEOF'
 import glob, re, collections
@@ -284,6 +300,7 @@ for fam in ("nni", "spr"):
             if total:
                 print("    %-8s beats control in %d/%d block(s)" % (a, better, total))
 PYEOF
+fi
 echo
 echo "=== POOLED ACROSS ALL TRIALS IN $BASEDIR ==="
 python - "$BASEDIR" <<'PYEOF2'
@@ -335,4 +352,8 @@ for fam in ("nni", "spr"):
         print("%-10s %10s %10d %12.0f" % ("ctrl", "-", len(cc), sum(cc) / len(cc)))
 PYEOF2
 echo
-echo "=== ALL DONE (trial $TRIAL) ==="
+if [ "$SUMMARY_ONLY" = "1" ]; then
+  echo "=== SUMMARY ONLY: nothing was run and no trial was created ==="
+else
+  echo "=== ALL DONE (trial $TRIAL) ==="
+fi
