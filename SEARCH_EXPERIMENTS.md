@@ -10,6 +10,69 @@ regex-scraping the human-readable `.log`.
 
 ---
 
+## 0. Combining flags — read this first
+
+The sections below are numbered for reference, **not** because they are
+mutually exclusive. `--spr-refine` and `--spr-perturb` in particular are not
+alternatives you switch between: they are two orthogonal knobs on the *same*
+loop, and a normal run passes both at once.
+
+Every iteration of IQ-TREE's iterated local search does:
+
+```
+doTreePerturbation();                          // <-- --spr-perturb controls this half
+if (refine_mode == REFINE_SPR) doSPRSearch();
+else                           doNNISearch();  // <-- --spr-refine  controls this half
+addTreeToCandidateSet(...);
+```
+
+So there are four combinations:
+
+| flags | kick | refinement |
+|---|---|---|
+| *(none)* | random NNI | NNI |
+| `--spr-perturb "radius 6"` | random SPR | NNI |
+| `--spr-refine "..."` | random NNI | SPR |
+| **both** | random SPR | SPR |
+
+A fully-SPR run is one command line carrying both:
+
+```bash
+iqtree3 -s aln.fasta -st DNA -m GTR+F \
+        --spr-perturb "radius 6" \
+        --spr-refine "radius 10 fast quiet fullreopt 100 20 weightprune"
+```
+
+They are parsed independently, and `initRefinement` deliberately parses the
+perturb spec *before* the refinement early-return so that `--spr-perturb`
+works on its own with NNI refinement.
+
+**Two flags break this pattern:**
+
+- **`--spr-continuous` replaces the whole loop.** It runs one uninterrupted
+  SPR hill-climb from the best candidate tree and never perturbs. Combining it
+  with `--spr-perturb` is meaningless — there is no perturbation stage left.
+- **`--accept-dist` suppresses the perturbation half** and leaves the
+  refinement half intact. It composes with `--spr-refine` or with default NNI
+  refinement, but pairing it with `--spr-perturb` is pointless because the
+  kick never runs.
+
+Which pairs are meaningful:
+
+| combination | valid | note |
+|---|---|---|
+| `--spr-perturb` + `--spr-refine` | ✅ | the full SPR configuration |
+| `--spr-perturb` + `--perturb-slack` | ✅ | bounds the SPR kick |
+| `--perturb-slack` alone | ✅ | bounds the **NNI** kick |
+| `--accept-dist` + `--spr-refine` | ✅ | stochastic accept, SPR refinement |
+| `--accept-dist` alone | ✅ | stochastic accept, NNI refinement |
+| `--accept-dist` + `--spr-perturb` | ⚠️ | kick is suppressed; the flag does nothing |
+| `--spr-continuous` + `--spr-perturb` | ⚠️ | no perturbation stage exists |
+| `tunnel` in a `--spr-refine`/`--spr-continuous` spec | ✅ | refinement-side only |
+| `slack` in a `--spr-refine` spec | ❌ | rejected: it is a kick flag |
+
+---
+
 ## 1. SPR as the refinement stage
 
 Replaces IQ-TREE's NNI hill-climb with an SPR search; the perturbation,
