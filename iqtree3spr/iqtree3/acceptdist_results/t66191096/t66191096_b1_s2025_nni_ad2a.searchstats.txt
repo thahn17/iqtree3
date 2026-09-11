@@ -1,0 +1,1 @@
+prefix=t66191096_b1_s2025_nni_ad2a seed=2025 iterations=15 best_logl=-82341.99805 cpu_seconds=116.761261 wall_seconds=58.16731191 refiner=nni kick=none accept_dist=on accept_temp=2 accept_shape=1 accept_anneal=yes accept_floor=0 accept_last_temp=0.1333333333 downhill_kept=4883 downhill_offered=13140 bestseen_restored=no slack=off tunnel=off candidates_evaluated=34876

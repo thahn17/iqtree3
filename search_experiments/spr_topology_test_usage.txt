@@ -4,13 +4,13 @@ spr_topology_test -- command reference
 Standalone test/exploration executable for the modern SPR (subtree pruning
 and regrafting) API declared in tree/phylotree.h and implemented in
 tree/phylotree.cpp (isLegalSPR / applySPR / rollbackSPR). Source:
-tree/spr_topology_test.cpp. Build target: spr_topology_test (see
+search_experiments/spr_topology_test.cpp. Build target: spr_topology_test (see
 CMakeLists.txt). It does not link the `main` library and never runs a real
 IQ-TREE analysis pipeline, so most commands need no alignment or model --
 the exception is the likelihood command below, which does load a real
 alignment to actually evaluate the tree.
 
-The hill-climbing search itself (command 5) lives in tree/sprsearch.{h,cpp}
+The hill-climbing search itself (command 5) lives in search_experiments/sprsearch.{h,cpp}
 rather than in spr_topology_test.cpp, because iqtree3 shares it: its
 --spr-refine flag runs this same search as the refinement stage of its own
 stochastic search, in place of NNI. See section 7 below. That split changed
@@ -62,7 +62,7 @@ Tree argument convention (used by every command that takes a tree):
     build/spr_topology_test
 
     Runs the built-in regression test on a fixed hardcoded 6-taxon tree
-    (mirrors test_scripts/test_data/spr/six_taxa.start.tree): applies one
+    (mirrors search_experiments/test_data/spr/six_taxa.start.tree): applies one
     SPR move, checks the resulting adjacency/topology, rolls it back, and
     checks the tree is byte-for-byte identical to the original. Prints
     [PASS]/[FAIL] per check plus a final summary. Exit code 0 iff every
@@ -91,7 +91,7 @@ Tree argument convention (used by every command that takes a tree):
 
     Prunes <prune-edge> and enumerates every distinct, legal regraft
     target within <radius> tree-hops of the prune point (see
-    findGraftPositions in tree/spr_topology_test.cpp for exactly how
+    findGraftPositions in search_experiments/spr_topology_test.cpp for exactly how
     radius/legality/dedup are defined). Pure enumeration, nothing is
     applied or mutated. Prints one line per candidate: its radius, its
     edge spec (feedable back into command 2 as a regraft-edge), and
@@ -408,7 +408,7 @@ Tree argument convention (used by every command that takes a tree):
                        build/spr_topology_test --hillclimb real.fa 10 10000 \
                            fast quiet notree starttree nni_run.treefile \
                            model "LG+F{<those 20 values>}" record
-                     test_scripts/extract_iqtree_model.py automates the
+                     search_experiments/scripts/extract_iqtree_model.py automates the
                      "read nni_run.iqtree, build the spec string" step above
       notree         no ground-truth tree: <alisim-tree.treefile> is instead
                      a real alignment file path DIRECTLY (any file format
@@ -526,7 +526,7 @@ Tree argument convention (used by every command that takes a tree):
     (they'd desync against the shared RNG stream), so each step instead
     draws one shared prune-edge slot and one shared regraft-candidate
     index and applies the corresponding move to all four copies (see
-    runBranchLengthCompare's comment in tree/spr_topology_test.cpp for the
+    runBranchLengthCompare's comment in search_experiments/spr_topology_test.cpp for the
     full mechanism; a sync mismatch aborts the run rather than continuing
     on a nonsense comparison).
 
@@ -555,7 +555,7 @@ Tree argument convention (used by every command that takes a tree):
 
     These are iqtree3 flags, not spr_topology_test ones -- but the string
     they take is written in exactly the vocabulary command 5's trailing
-    flags use, and is parsed by the same code (tree/sprsearch.cpp's
+    flags use, and is parsed by the same code (search_experiments/sprsearch.cpp's
     parseRefineSpec). The two tools deliberately share one flag language
     rather than maintaining two that can drift.
 
@@ -567,7 +567,7 @@ Tree argument convention (used by every command that takes a tree):
     back up, then keeps the result only if it survives the candidate set.
     "--spr-refine" replaces the hill-climb half -- normally doNNISearch --
     with this file's own SPR search, run through the shared module
-    tree/sprsearch.h. Everything else about the iteration is untouched:
+    search_experiments/sprsearch.h. Everything else about the iteration is untouched:
     the same perturbation, the same candidate set, the same stopping rule,
     the same model re-optimization on an improving iteration.
 
@@ -643,7 +643,8 @@ Tree argument convention (used by every command that takes a tree):
                      bounds IQ-TREE's own default random-NNI kick. That is
                      the only way to get the behaviour on the NNI kick, so
                      the same bound can be compared across both. "anneal"
-                     decays D to 0 across the first min_iterations kicks.
+                     decays D linearly to 0 over the main loop, reaching 0 on
+                     its last kick (search_experiments/README.md, "Annealing").
                      Refused draws are rolled back and redrawn (up to 8
                      attempts per slot), so a kick still lands its full
                      move count wherever it can.
@@ -721,9 +722,9 @@ Tree argument convention (used by every command that takes a tree):
                      than letting it wander anywhere at all.
 
                      "anneal" decays D linearly from its given value down
-                     to 0 across the run's first min_iterations kicks (the
-                     -n/--ninit-derived iteration count IQ-TREE would
-                     otherwise stop at by default), then holds at 0 --
+                     to 0 over the main loop: the first kick uses D, the
+                     last uses 0 (exactly, with -n N; under the default
+                     stopping rule, against the projected stopping point) --
                      i.e. early kicks are more exploratory and later ones
                      barely disturb the incumbent at all. Without
                      "anneal", D is constant for the whole run.
@@ -889,7 +890,7 @@ Generating input data with AliSim
 --hillclimb needs the FULL iqtree3 executable (a separate CMake target) to
 generate its input, since AliSim lives in main/alisim.cpp, which
 spr_topology_test deliberately doesn't link (see the header comment in
-tree/spr_topology_test.cpp for why). Build it once:
+search_experiments/spr_topology_test.cpp for why). Build it once:
     cmake --build build --target iqtree3
 
 Then generate a tree+alignment pair, e.g. 100 taxa, Yule-Harding random
@@ -916,7 +917,7 @@ standalone with no PATH setup needed on any platform.
 Notes
 -----
 - Branch lengths print with 1 decimal place in all Newick output from this
-  tool (see newickOf() in tree/spr_topology_test.cpp) -- a display
+  tool (see newickOf() in search_experiments/spr_topology_test.cpp) -- a display
   setting for readability, not a precision limit on computation.
 - If your Newick input has no branch lengths at all, IQ-TREE's parser
   defaults them to a -1.0 sentinel; applySPR's naive half-split of a
@@ -946,12 +947,12 @@ Notes
   full wall-clock timing corrected for IQ-TREE's own per-iteration "Time:"
   field only starting once its own start tree exists -- see the script's
   header comment for why):
-    test_scripts/record_iqtree_nni.sh <alisim-tree.treefile> <nstop> [gtr] [quiet]
+    search_experiments/scripts/record_iqtree_nni.sh <alisim-tree.treefile> <nstop> [gtr] [quiet]
     (or record_iqtree_nni.ps1, same behavior, for PowerShell)
 
   Examples:
-    test_scripts/record_iqtree_nni.sh sim.treefile 100
-    test_scripts/record_iqtree_nni.sh sim.treefile 100 gtr quiet
+    search_experiments/scripts/record_iqtree_nni.sh sim.treefile 100
+    search_experiments/scripts/record_iqtree_nni.sh sim.treefile 100 gtr quiet
 
 - To find the RF distance between sim.treefile and sim.fa.treefile:
     build/iqtree3 -t sim.treefile -rf sim.fa.treefile -pre rf_check 2>&1 | tail -5

@@ -222,8 +222,7 @@ public:
         rather than by live pointers/iterators into the tree. Produced by candidate
         generation, ranked by screening_score, and only mutates the tree when
         passed to applySPR()/scoreSPR()/commitSPR().
-        See SPR_IMPLEMENTATION_PLAN section 4.2. NOTE: the modern SPR search that
-        produces and consumes these is not implemented yet.
+        See SPR_IMPLEMENTATION_PLAN section 4.2. Produced and consumed by the SPR search in search_experiments/sprsearch.cpp.
  */
 struct SPRMove {
 
@@ -261,8 +260,7 @@ struct SPRMove {
 /**
         State required to undo a single applySPR() call and restore the tree to
         its exact pre-move topology and branch lengths.
-        See SPR_IMPLEMENTATION_PLAN section 4.2. NOTE: not populated or consumed
-        by any implementation yet.
+        See SPR_IMPLEMENTATION_PLAN section 4.2. Filled by applySPR() and consumed by rollbackSPR() (search_experiments/phylotree_spr.cpp).
  */
 struct SPRRollback {
 
@@ -1991,7 +1989,7 @@ public:
             generated without mutating the tree, scored through a reversible
             apply/rollback transaction, and only committed once. See
             SPR_IMPLEMENTATION_PLAN section 4.3.
-            NOTE: declarations only, not implemented yet.
+            Defined in search_experiments/phylotree_spr.cpp.
      ****************************************************************************/
 
     /**

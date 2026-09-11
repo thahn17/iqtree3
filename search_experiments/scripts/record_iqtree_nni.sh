@@ -4,7 +4,7 @@
 # iqtree3.exe, NOT spr_topology_test's standalone SPR API) into a CSV with
 # the same columns spr_topology_test's --hillclimb "record" flag writes:
 # run_id,candidates,time_elapsed,logL,true_minus_current
-# (see recordSpreadsheetPath/appendRecordRow in tree/spr_topology_test.cpp).
+# (see recordSpreadsheetPath/appendRecordRow in search_experiments/spr_topology_test.cpp).
 #
 # Bash port of record_iqtree_nni.ps1 (same logic) -- use this one instead of
 # the .ps1 version if PowerShell script execution is disabled on your system
@@ -37,7 +37,7 @@
 #    completion.
 #
 # Usage (mirrors spr_topology_test --hillclimb's calling convention):
-#     test_scripts/record_iqtree_nni.sh <alisim-tree.treefile> <nstop> [gtr] [quiet]
+#     search_experiments/scripts/record_iqtree_nni.sh <alisim-tree.treefile> <nstop> [gtr] [quiet]
 #
 # <alisim-tree.treefile>  path to the AliSim ground-truth tree; the
 #                          alignment is derived by replacing ".treefile"
@@ -57,8 +57,8 @@
 # (default record_<model>_iqtree_nni_ownstart.csv).
 #
 # Examples:
-#     test_scripts/record_iqtree_nni.sh sim.treefile 100
-#     test_scripts/record_iqtree_nni.sh sim.treefile 100 gtr quiet
+#     search_experiments/scripts/record_iqtree_nni.sh sim.treefile 100
+#     search_experiments/scripts/record_iqtree_nni.sh sim.treefile 100 gtr quiet
 
 set -euo pipefail
 
@@ -163,7 +163,7 @@ OFFSET="$(awk -v e="$EXTERNAL_TOTAL" -v i="$INTERNAL_TOTAL" 'BEGIN{printf "%.3f"
 [ "$QUIET" = 1 ] || echo "External process time: ${EXTERNAL_TOTAL}s -- IQ-TREE-reported time: ${INTERNAL_TOTAL}s -- pre-search-timer overhead added back: ${OFFSET}s"
 
 # --- Step 4: append to the record spreadsheet, same format as
-# recordSpreadsheetPath/appendRecordRow in tree/spr_topology_test.cpp.
+# recordSpreadsheetPath/appendRecordRow in search_experiments/spr_topology_test.cpp.
 SANITIZED_MODEL="$(echo "$MODEL" | sed -E 's/[^A-Za-z0-9]/_/g')"
 if [ -n "$CSV_PATH_OVERRIDE" ]; then
     CSV_PATH="$CSV_PATH_OVERRIDE"

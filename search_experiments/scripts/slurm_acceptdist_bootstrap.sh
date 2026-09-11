@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Run test_scripts/run_acceptdist_bootstrap.sh repeatedly until the job's
+# Run search_experiments/scripts/run_acceptdist_bootstrap.sh repeatedly until the job's
 # walltime is nearly gone, accumulating independent bootstrap trials.
 #
 # No #SBATCH header on purpose -- supply the resource request on the command
-# line (sbatch -t 24:00:00 -c 8 --mem=8G test_scripts/slurm_acceptdist_bootstrap.sh)
+# line (sbatch -t 24:00:00 -c 8 --mem=8G search_experiments/scripts/slurm_acceptdist_bootstrap.sh)
 # or prepend your own directives. One header line IS worth adding if your site
 # allows it, because it enables the graceful-save path below:
 #
@@ -33,7 +33,7 @@ cd "${SLURM_SUBMIT_DIR:-$PWD}" || exit 1
 # ------------------------------------------------------------ sanity checks --
 # Fail loudly and immediately rather than burning the allocation on an error
 # buried thousands of lines into a log.
-INNER="test_scripts/run_acceptdist_bootstrap.sh"
+INNER="search_experiments/scripts/run_acceptdist_bootstrap.sh"
 IQ="${IQ:-$PWD/build/iqtree3}"
 [ -x "$IQ" ] || IQ="$PWD/build/iqtree3.exe"
 
@@ -149,7 +149,7 @@ if not rows:
     raise SystemExit
 trials = sorted({k[0] for k in rows})
 blocks = sorted({(k[0], k[1], k[2]) for k in rows})
-arms = ["ctrl", "ad05c", "ad05a", "ad2a", "ad2s2a"]
+arms = ["ctrl", "ad05c", "ad05a", "ad2a", "ad2s2a", "cont"]
 print("trials=%d  paired blocks=%d" % (len(trials), len(blocks)))
 for fam in ("nni", "spr"):
     fb = [b for b in blocks if any((b[0], b[1], b[2], fam, a) in rows for a in arms)]

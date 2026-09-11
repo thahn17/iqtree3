@@ -2,7 +2,7 @@
 """
 Averages repeated runs within a record_<model><tag>.csv-style file (columns
 run_id,candidates,time_elapsed,logL,true_minus_current -- see
-appendRecordRow in tree/spr_topology_test.cpp) into one approximate
+appendRecordRow in search_experiments/spr_topology_test.cpp) into one approximate
 "mean run" per distinct parameter combination.
 
 Only operates on files that have already been split by
@@ -36,7 +36,7 @@ times outside what it actually measured (the printed per-t "n" isn't
 constant across the file for this reason).
 
 Usage:
-    python3 test_scripts/average_record_runs.py [directory] [prefix]
+    python3 search_experiments/scripts/analysis/average_record_runs.py [directory] [prefix]
 
     [directory]  where to look for <prefix>*_regular.csv / *_findopt.csv
                  (default: current directory)

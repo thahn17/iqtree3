@@ -1,0 +1,1 @@
+prefix=t239438346_b1_s777_spr_ctrl seed=777 iterations=15 best_logl=-84076.57357 cpu_seconds=3375.061653 wall_seconds=1812.240926 refiner=spr kick=spr accept_dist=off slack=off tunnel=off candidates_evaluated=126614

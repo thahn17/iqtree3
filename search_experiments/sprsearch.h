@@ -2,7 +2,7 @@
  *   Reusable SPR (subtree pruning and regrafting) hill-climbing search.  *
  *                                                                        *
  *   This is the search machinery that used to live entirely inside       *
- *   tree/spr_topology_test.cpp's anonymous namespace. It was lifted out  *
+ *   search_experiments/spr_topology_test.cpp's anonymous namespace. It was lifted out  *
  *   verbatim so a SECOND caller could use it: IQTree::doSPRSearch(),     *
  *   which runs it as the per-iteration refinement stage of IQ-TREE's own *
  *   stochastic search, in place of doNNISearch -- see                    *
@@ -16,13 +16,13 @@
  *   runHillClimb so the step loop can be entered repeatedly (once per    *
  *   IQ-TREE perturbation) instead of exactly once per process.           *
  *                                                                        *
- *   Full flag reference: tree/spr_topology_test_usage.txt.               *
+ *   Full flag reference: search_experiments/spr_topology_test_usage.txt.               *
  ***************************************************************************/
 
 #ifndef SPRSEARCH_H
 #define SPRSEARCH_H
 
-#include "phylotree.h"
+#include "tree/phylotree.h"
 #include "alignment/alignment.h"
 #include <deque>
 #include <string>
@@ -56,7 +56,7 @@ void initClonedTree(PhyloTree &t, const string &newickStr, Alignment *aln, Param
 /*==========================================================================
     Everything below is moved verbatim from spr_topology_test.cpp. The full
     explanatory comment for each function stays with its definition in
-    tree/sprsearch.cpp rather than being duplicated here.
+    search_experiments/sprsearch.cpp rather than being duplicated here.
  *========================================================================*/
 
 void collectLeafNames(PhyloNode *node, PhyloNode *dad, vector<string> &names);
@@ -407,9 +407,10 @@ bool computeSiblingCompatibilityScore(PhyloTree &tree, PhyloNode *p, PhyloNode *
 
     ANNEALING. With `anneal`, T is scaled by (1 - progress) as the run
     advances, floored at `tempFloor`. Progress is supplied by the caller
-    (steps/budget for a continuous SPR stage, iteration/min_iterations for
-    the iterated search), so this struct stays agnostic about what is
-    being counted. At T = 0 the rule degenerates to strict hill-climbing,
+    (steps/budget for a continuous SPR stage; for the iterated search,
+    IQTree::updateSearchProgress's clock, 0 on the first main-loop
+    iteration and 1 on the last), so this struct stays agnostic about
+    what is being counted. At T = 0 the rule degenerates to strict hill-climbing,
     which is why annealing to a floor of 0 is the sensible default: the run
     ends as a pure hill-climb no matter how exploratory it started.
 
@@ -441,6 +442,33 @@ struct AcceptDist {
         this rule stays bit-identical to one without it.
      */
     bool accept(double delta, double progress) const;
+};
+
+/**
+ *  Per-kick state for --perturb-slack on IQ-TREE's NNI kick
+ *  (IQTree::doRandomNNIs and the judgeNNIKickMove hook). active is false
+ *  unless the flag was given, and then the kick loop is the stock one.
+ */
+struct KickSlack {
+    enum Verdict { KEEP, REDRAW, GIVE_UP };
+    static const int MAX_DRAWS = 8;     // redraws per slot before giving it up
+    bool active = false;
+    double delta = 0.0;                 // this kick's bound (after annealing)
+    double curScore = 0.0;              // score after the last kept move
+    long kept = 0, refused = 0;
+    int draws = 0;
+};
+
+/**
+ *  Per-call state for --accept-dist inside the NNI refiner
+ *  (IQTree::optimizeNNI): the bounded stall counter, and the best tree the
+ *  walk has passed through, restored on the way out.
+ */
+struct NNIAcceptState {
+    static const int STALL_LIMIT = 5;   // consecutive non-improving steps
+    int stall = 0;
+    double bestScore = 0.0;
+    std::string bestTree;
 };
 
 struct SPRSearchOptions {
@@ -643,6 +671,8 @@ struct SPRSearchState {
     double bestSeenScore;
     string bestSeenTree;
     bool bestSeenRestored;
+    /** how many refinements ended in a best-seen restore, either refiner */
+    long bestSeenRestores;
     long successfulSteps;
     int stepsRun;                   // total steps attempted, for findopt's cadence
 

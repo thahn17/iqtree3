@@ -33,7 +33,7 @@
 #include "node.h"
 #include "candidateset.h"
 #include "utils/pllnni.h"
-#include "sprsearch.h"
+#include "search_experiments/sprsearch.h"
 
 typedef std::map< string, double > mapString2Double;
 typedef std::multiset< double, std::less< double > > multiSetDB;
@@ -434,80 +434,6 @@ public:
     virtual pair<int, int> doNNISearch(bool write_info = false);
 
     /**
-     *      @brief Perform one SPR hill-climbing pass on the current tree
-     *      topology -- the --spr-refine alternative to doNNISearch as the
-     *      refinement stage after each perturbation. Runs the same search
-     *      spr_topology_test --hillclimb does, through the shared code in
-     *      tree/sprsearch.h, and re-optimizes model parameters afterwards
-     *      on an improvement exactly as doNNISearch does.
-     *      @return the resulting log-likelihood (also left in curScore)
-     */
-    double doSPRSearch(int blockCap = 20, int patience = 1);
-
-    /**
-     *      --spr-continuous: one long SPR hill-climb from the best
-     *      candidate tree, run INSTEAD of the perturb/refine loop. See
-     *      Params::spr_continuous.
-     *      @return the resulting log-likelihood
-     */
-    double doContinuousSPRStage();
-
-    /**
-     *      The "escape" variant of the continuous stage: hill-climb until
-     *      progress stalls, then kick, try to beat the pre-kick score, and
-     *      ROLL BACK if the attempt fails. Same perturb-then-refine shape
-     *      as IQ-TREE's own loop, but the excursion reverts in place
-     *      instead of restarting from the candidate set.
-     *      @return the resulting log-likelihood
-     */
-    double runEscapingSPRStage();
-
-    /**
-     *      --spr-perturb's kick: apply floor((ntaxa-3) * --perturb) random
-     *      SPR moves to the current tree, the SPR counterpart of
-     *      doRandomNNIs. Nothing is scored or kept -- a perturbation is
-     *      meant to make the tree worse; doTreeSearch's refinement stage
-     *      climbs back.
-     */
-    void doRandomSPRs();
-
-
-    /**
-     *      Parse Params::refine_spec and set up whatever the chosen
-     *      refinement mode needs (SPRSearchOptions, and the record CSV's
-     *      identity when "record" was asked for). Called once from
-     *      initSettings, so a bad spec is reported before the run's real
-     *      work starts rather than at the first perturbation.
-     */
-    void initRefinement(Params &params);
-
-    /**
-     *      Write one line per finished run to <prefix>.searchstats.txt: the
-     *      configuration that ran and what it achieved. Exists so a sweep
-     *      can be tabulated without re-parsing IQ-TREE's human-readable log,
-     *      which is the only other place these numbers appear.
-     */
-    void writeSearchStats();
-
-    /**
-     *      Build the record/trajectory file identity (run id, tag, model
-     *      name) on first use. Split out of initRefinement because the
-     *      files are named after the model, which is neither built nor --
-     *      under ModelFinder -- even chosen by the time initSettings runs.
-     *      Idempotent; a no-op after the first call.
-     */
-    void finalizeRefineIdentity();
-
-    /**
-     *      One --spr-refine/--nni-refine bookkeeping pass, run after each
-     *      completed perturbation+refinement iteration regardless of which
-     *      refiner did the work: appends the "record" row, the
-     *      "trajectory" topology line, and fires the periodic "findopt"
-     *      diagnostic whose cadence counts kicks here rather than steps.
-     */
-    void recordRefineIteration();
-
-    /**
             @brief evaluate all NNIs
             @param  node    evaluate all NNIs of the subtree rooted at node
             @param  dad     a neighbor of \p node which does not belong to the subtree
@@ -633,11 +559,136 @@ public:
      */
     SearchInfo searchinfo;
 
+    /* ======================================================================
+     *  SEARCH EXPERIMENTS
+     *  Everything between here and END SEARCH EXPERIMENTS belongs to the
+     *  search-experiment additions (--spr-refine, --spr-perturb,
+     *  --spr-continuous, --perturb-slack, --accept-dist, "record", ...).
+     *  Definitions: search_experiments/iqtree_search_experiments.cpp.
+     *  tree/iqtree.cpp only calls the hooks declared below, each call site
+     *  marked "[search-experiments hook]"; with none of those flags given,
+     *  every hook is a no-op and the stock search runs unchanged.
+     *  See search_experiments/README.md.
+     * ====================================================================== */
+
+    /**
+     *      @brief Perform one SPR hill-climbing pass on the current tree
+     *      topology -- the --spr-refine alternative to doNNISearch as the
+     *      refinement stage after each perturbation. Runs the same search
+     *      spr_topology_test --hillclimb does, through the shared code in
+     *      search_experiments/sprsearch.h, and re-optimizes model parameters afterwards
+     *      on an improvement exactly as doNNISearch does.
+     *      @return the resulting log-likelihood (also left in curScore)
+     */
+    double doSPRSearch(int blockCap = 20, int patience = 1);
+
+    /**
+     *      --spr-continuous: one long SPR hill-climb from the best
+     *      candidate tree, run INSTEAD of the perturb/refine loop. See
+     *      Params::spr_continuous.
+     *      @return the resulting log-likelihood
+     */
+    double doContinuousSPRStage();
+
+    /**
+     *      The "escape" variant of the continuous stage: hill-climb until
+     *      progress stalls, then kick, try to beat the pre-kick score, and
+     *      ROLL BACK if the attempt fails. Same perturb-then-refine shape
+     *      as IQ-TREE's own loop, but the excursion reverts in place
+     *      instead of restarting from the candidate set.
+     *      @return the resulting log-likelihood
+     */
+    double runEscapingSPRStage();
+
+    /**
+     *      --spr-perturb's kick: apply floor((ntaxa-3) * --perturb) random
+     *      SPR moves to the current tree, the SPR counterpart of
+     *      doRandomNNIs. Nothing is scored or kept -- a perturbation is
+     *      meant to make the tree worse; doTreeSearch's refinement stage
+     *      climbs back.
+     */
+    void doRandomSPRs();
+
+
+    /**
+     *      Parse Params::refine_spec and set up whatever the chosen
+     *      refinement mode needs (SPRSearchOptions, and the record CSV's
+     *      identity when "record" was asked for). Called once from
+     *      initSettings, so a bad spec is reported before the run's real
+     *      work starts rather than at the first perturbation.
+     */
+    void initRefinement(Params &params);
+
+    /**
+     *      Write one line per finished run to <prefix>.searchstats.txt: the
+     *      configuration that ran and what it achieved. Exists so a sweep
+     *      can be tabulated without re-parsing IQ-TREE's human-readable log,
+     *      which is the only other place these numbers appear.
+     */
+    void writeSearchStats();
+
+    /**
+     *      Build the record/trajectory file identity (run id, tag, model
+     *      name) on first use. Split out of initRefinement because the
+     *      files are named after the model, which is neither built nor --
+     *      under ModelFinder -- even chosen by the time initSettings runs.
+     *      Idempotent; a no-op after the first call.
+     */
+    void finalizeRefineIdentity();
+
+    /**
+     *      One --spr-refine/--nni-refine bookkeeping pass, run after each
+     *      completed perturbation+refinement iteration regardless of which
+     *      refiner did the work: appends the "record" row, the
+     *      "trajectory" topology line, and fires the periodic "findopt"
+     *      diagnostic whose cadence counts kicks here rather than steps.
+     */
+    void recordRefineIteration();
+
+    // ---- hooks called from IQ-TREE's own search loop (tree/iqtree.cpp) ----
+
+    /** init(): zero the experiment counters and clock */
+    void initSearchExperimentState();
+
+    /** doTreeSearch, before the main loop: reset the annealing clock, and
+     *  run --spr-continuous's single SPR climb when it was asked for */
+    void beginSearchExperiments();
+
+    /** doTreeSearch, top of every main-loop iteration: advance the shared
+     *  annealing clock (experiment_progress) */
+    void updateSearchProgress();
+
+    /** doTreePerturbation: true if --accept-dist (no kick) or
+     *  --spr-perturb (SPR kick) handled the perturbation */
+    bool doExperimentPerturbation();
+
+    /** doRandomNNIs: --perturb-slack on IQ-TREE's NNI kick */
+    void beginNNIKickSlack(sprsearch::KickSlack &slack);
+    sprsearch::KickSlack::Verdict judgeNNIKickMove(sprsearch::KickSlack &slack, NNIMove &move);
+    void endNNIKickSlack(const sprsearch::KickSlack &slack);
+
+    /** evaluateNNIs: count the evaluation; under --accept-dist a losing
+     *  NNI may still be admitted. Returns whether to keep the candidate. */
+    bool acceptNNICandidate(double newLogl, double curLogl);
+
+    /** optimizeNNI: --accept-dist's bounded downhill walk, and the restore
+     *  of the best tree it passed through */
+    void beginNNIAcceptWalk(sprsearch::NNIAcceptState &walk);
+    bool nniAcceptWalkShouldStop(sprsearch::NNIAcceptState &walk, double newScore, double oldScore);
+    void endNNIAcceptWalk(sprsearch::NNIAcceptState &walk);
+
+    /** doTreeSearch, after the main loop: "sweep" and the last "record" row */
+    void finishSearchExperiments();
+
+    /** doTreeSearch, at the end: <prefix>.searchstats.txt and the
+     *  accept-dist / slack summaries */
+    void reportSearchExperiments();
+
     /**
      *  --spr-refine/--nni-refine's parsed settings, and the SPR search
      *  state that has to survive from one refinement pass to the next
      *  (the learnradius window, the shrink counters, the record CSV's
-     *  identity and running totals -- see tree/sprsearch.h). Both are
+     *  identity and running totals -- see search_experiments/sprsearch.h). Both are
      *  filled in by initRefinement and left at their defaults when
      *  neither flag was given.
      */
@@ -666,15 +717,21 @@ public:
     sprsearch::AcceptDist accept_dist;
 
     /**
-     *  Fraction of the run already elapsed, in [0, 1], for the annealing
-     *  schedule: iteration count against params->min_iterations. Refreshed
-     *  once per iteration in doTreeSearch so both refiners read a single
-     *  consistent value rather than each deriving its own.
+     *  The shared annealing clock, in [0, 1]: 0 on the first main-loop
+     *  iteration, 1 on the last. Read by "slack anneal" (either kick) and
+     *  "--accept-dist ... anneal" (either refiner). Refreshed once per
+     *  iteration by updateSearchProgress, which documents how the last
+     *  iteration is determined under each stopping rule.
      */
-    double accept_progress;
+    double experiment_progress;
 
+    /**
+     *  stop_rule's iteration index on the first main-loop iteration, or -1
+     *  before the loop starts -- the zero point of experiment_progress.
+     */
+    int search_loop_start;
 
-
+    /* ==================== END SEARCH EXPERIMENTS ==================== */
 
     /**
      *  Vector contains number of NNIs used at each iterations

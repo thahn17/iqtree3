@@ -37,8 +37,8 @@ reference topology instead groups `A,B`, `C,D`, and `E,F`.
 Once an SPR option is implemented, use a caller-owned output prefix, for example:
 
 ```text
-iqtree3 -s test_scripts/test_data/spr/six_taxa.phy \
-  -t test_scripts/test_data/spr/six_taxa.start.tree \
+iqtree3 -s search_experiments/test_data/spr/six_taxa.phy \
+  -t search_experiments/test_data/spr/six_taxa.start.tree \
   --prefix <temporary-output>/six_taxa
 ```
 

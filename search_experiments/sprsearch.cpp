@@ -1,8 +1,8 @@
 /***************************************************************************
  *   Reusable SPR hill-climbing search -- implementation.                 *
  *                                                                        *
- *   Moved verbatim out of tree/spr_topology_test.cpp's anonymous         *
- *   namespace so both callers can share it (see tree/sprsearch.h for     *
+ *   Moved verbatim out of search_experiments/spr_topology_test.cpp's anonymous         *
+ *   namespace so both callers can share it (see search_experiments/sprsearch.h for     *
  *   why). The only genuinely new code in this file is the re-entrant     *
  *   driver at the bottom: runSPRSteps/runSPRSweep are runHillClimb's own *
  *   step loop and sweep phase, lifted unchanged, with the ~40 loose      *
@@ -2669,7 +2669,7 @@ bool computeSiblingCompatibilityScore(PhyloTree &tree, PhyloNode *p, PhyloNode *
 
 
 /*==========================================================================
-    Re-entrant driver -- see tree/sprsearch.h for the design.
+    Re-entrant driver -- see search_experiments/sprsearch.h for the design.
  *========================================================================*/
 
 AcceptDist::AcceptDist()
@@ -2734,7 +2734,7 @@ SPRSearchState::SPRSearchState()
           candidatesEvaluated(0), tunnelEntered(0), tunnelProbes(0), tunnelCommitted(0),
           slackAccepted(0), slackRejected(0), slackKicks(0), slackLastDelta(0.0),
           acceptedDownhill(0), offeredDownhill(0), lastTemperature(0.0),
-          bestSeenScore(-DBL_MAX), bestSeenRestored(false),
+          bestSeenScore(-DBL_MAX), bestSeenRestored(false), bestSeenRestores(0),
           successfulSteps(0), stepsRun(0),
           learnRadiusMaxPath(0.0), learnRadiusExcursionOpen(false), learnRadiusAnchorA(nullptr),
           learnRadiusAnchorB(nullptr), learnRadiusFinalNode(nullptr), investigateNext(false),
@@ -3568,7 +3568,7 @@ bool parsePerturbSpec(const string &spec, SPRSearchOptions &opt, string &err) {
             if (opt.weightpruneFlag == PRUNE_SHORT)
                 cout << "WARNING: 'weightprune short' is deprecated -- it measured markedly WORSE"
                         " than both an unweighted prune and 'weightprune long' (see PruneWeighting"
-                        " in tree/sprsearch.h). Use 'weightprune long', or drop the flag." << endl;
+                        " in search_experiments/sprsearch.h). Use 'weightprune long', or drop the flag." << endl;
             continue;
         }
         err = "'" + t + "' does not describe an SPR MOVE, so it means nothing to a"
@@ -3888,11 +3888,11 @@ bool parseRefineSpec(const string &spec, bool sprMode, SPRSearchOptions &opt, st
             if (opt.weightpruneFlag == PRUNE_SHORT)
                 cout << "WARNING: 'weightprune short' is deprecated -- it measured markedly WORSE"
                         " than both an unweighted prune and 'weightprune long' (see PruneWeighting"
-                        " in tree/sprsearch.h). Use 'weightprune long', or drop the flag." << endl;
+                        " in search_experiments/sprsearch.h). Use 'weightprune long', or drop the flag." << endl;
             continue;
         }
 
-        err = "unknown flag '" + t + "' (see tree/spr_topology_test_usage.txt for the"
+        err = "unknown flag '" + t + "' (see search_experiments/spr_topology_test_usage.txt for the"
                 " full vocabulary --spr-refine shares with --hillclimb)";
         return false;
     }

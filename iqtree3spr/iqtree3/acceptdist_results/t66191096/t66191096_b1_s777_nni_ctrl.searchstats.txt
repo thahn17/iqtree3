@@ -1,0 +1,1 @@
+prefix=t66191096_b1_s777_nni_ctrl seed=777 iterations=15 best_logl=-82364.82633 cpu_seconds=118.124999 wall_seconds=58.93950295 refiner=nni kick=nni accept_dist=off slack=off tunnel=off candidates_evaluated=64642

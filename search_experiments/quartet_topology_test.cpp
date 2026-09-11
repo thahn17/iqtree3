@@ -16,12 +16,12 @@
  *
  *   This is a plain executable with its own main() -- it does not run a *
  *   real IQ-TREE analysis pipeline, and shares no code with (only the   *
- *   same house style as) tree/spr_topology_test.cpp, its nearest sibling*
+ *   same house style as) search_experiments/spr_topology_test.cpp, its nearest sibling*
  *   in this directory.                                                  *
  *   Build target: quartet_topology_test (see root CMakeLists.txt).      *
  ***************************************************************************/
 
-#include "phylotree.h"
+#include "tree/phylotree.h"
 #include "alignment/alignment.h"
 #include "model/modelfactory.h"
 #include "utils/timeutil.h"
@@ -43,7 +43,7 @@
 // does link (utils/tree/alignment/model) even though they're only ever
 // defined in main/*.cpp; this tool never exercises the code paths that
 // call them, so trivial stubs are enough to satisfy the linker -- same
-// stubs, for the same reason, as tree/spr_topology_test.cpp's own.
+// stubs, for the same reason, as search_experiments/spr_topology_test.cpp's own.
 void printCopyright(ostream &out) {}
 string detectSeqTypeName(string model_name) { return ""; }
 void reportRate(ostream &out, PhyloTree &tree) {}
@@ -82,7 +82,7 @@ bool isSupportedSeqType(SeqType seqType) {
     overridable via --model for a literal external spec (e.g. carrying
     over a real iqtree3 run's own fitted values the same way
     spr_topology_test.cpp's "model <spec>" flag and
-    test_scripts/extract_iqtree_model.py do).
+    search_experiments/scripts/extract_iqtree_model.py do).
  */
 string defaultModelFor(SeqType seqType) {
     if (seqType == SEQ_PROTEIN)
@@ -112,7 +112,7 @@ void printUsage(const char *progName) {
     cerr << "                    topologies are scored under, INSTEAD of the default" << endl;
     cerr << "                    LG+FO+G4/GTR+FO+G4 fit fresh from this alignment -- the same" << endl;
     cerr << "                    fixed-parameter-spec convention spr_topology_test.cpp's own" << endl;
-    cerr << "                    \"model <spec>\" flag and test_scripts/extract_iqtree_model.py use" << endl;
+    cerr << "                    \"model <spec>\" flag and search_experiments/scripts/extract_iqtree_model.py use" << endl;
     cerr << "  threads <N>       number of threads for the shared model's own initial fit and" << endl;
     cerr << "                    (OpenMP builds only) quartet likelihood computation (default: 1)." << endl;
     cerr << "                    N>1 has NOT been verified safe -- concurrent quartets share the" << endl;

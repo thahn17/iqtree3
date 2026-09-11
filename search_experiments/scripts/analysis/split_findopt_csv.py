@@ -2,7 +2,7 @@
 """
 Splits a record_<model><tag>.csv file (columns: run_id,candidates,
 time_elapsed,logL,true_minus_current -- see appendRecordRow in
-tree/spr_topology_test.cpp) written by a --hillclimb run using both
+search_experiments/spr_topology_test.cpp) written by a --hillclimb run using both
 "record" and "findopt" into two files: one with the real search-progress
 rows, one with findopt's own diagnostic checkpoint rows.
 
@@ -39,7 +39,7 @@ Rows are grouped by run_id first (never compared across different runs),
 since neither method's assumptions hold across a run boundary.
 
 Usage:
-    python3 test_scripts/split_findopt_csv.py <input.csv> [output_prefix]
+    python3 search_experiments/scripts/analysis/split_findopt_csv.py <input.csv> [output_prefix]
 
     <input.csv>      a record_*.csv containing both regular and findopt
                      rows (i.e. generated with "findopt ... record")
@@ -53,7 +53,7 @@ checkpoints you expected from the findoptEveryNSteps/max-steps you
 actually ran with).
 
 Example:
-    python3 test_scripts/split_findopt_csv.py record_JC_fast_findopt.csv
+    python3 search_experiments/scripts/analysis/split_findopt_csv.py record_JC_fast_findopt.csv
         -> record_JC_fast_findopt_regular.csv
            record_JC_fast_findopt_findopt.csv
 """

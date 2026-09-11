@@ -2,7 +2,7 @@
 """
 Averages an explicit, user-chosen list of run_ids from a record_*.csv-style
 file (columns run_id,candidates,time_elapsed,logL,true_minus_current -- see
-appendRecordRow in tree/spr_topology_test.cpp) into one approximate "mean
+appendRecordRow in search_experiments/spr_topology_test.cpp) into one approximate "mean
 run" -- score (logL) and score-difference (true_minus_current) both
 averaged, same time-alignment method average_record_runs.py uses for its
 automatic per-parameter-group averaging, but for whatever specific
@@ -20,7 +20,7 @@ run's first row or after its last), and the row written is the average
 across whichever runs cover that point.
 
 Usage:
-    python3 test_scripts/average_selected_runs.py <input.csv> <run_id> [<run_id> ...] [-o output.csv]
+    python3 search_experiments/scripts/analysis/average_selected_runs.py <input.csv> <run_id> [<run_id> ...] [-o output.csv]
 
     <input.csv>  a record_*.csv (or anything with the same 5-column
                  format, e.g. output from split_findopt_csv.py)
@@ -32,7 +32,7 @@ If any given run_id isn't found, the script lists every run_id actually
 present in the file and exits without writing anything.
 
 Example:
-    python3 test_scripts/average_selected_runs.py record_JC_fast_findopt.csv \\
+    python3 search_experiments/scripts/analysis/average_selected_runs.py record_JC_fast_findopt.csv \\
         20260804-164420_r10_s10000_fast_findopt500 \\
         20260804-165315_r10_s10000_fast_findopt500
 """

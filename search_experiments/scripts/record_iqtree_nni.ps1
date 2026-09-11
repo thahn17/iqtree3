@@ -4,7 +4,7 @@
     iqtree3.exe, NOT spr_topology_test's standalone SPR API) into a CSV with
     the same columns spr_topology_test's --hillclimb "record" flag writes:
     run_id,candidates,time_elapsed,logL,true_minus_current
-    (see recordSpreadsheetPath/appendRecordRow in tree/spr_topology_test.cpp).
+    (see recordSpreadsheetPath/appendRecordRow in search_experiments/spr_topology_test.cpp).
 
     Two things distinguish this from just eyeballing an `iqtree3 -s ... -m
     ...` log by hand:
@@ -48,8 +48,8 @@
                              written to the CSV).
 
     Example:
-        test_scripts/record_iqtree_nni.ps1 sim.treefile 100
-        test_scripts/record_iqtree_nni.ps1 sim.treefile 100 gtr quiet
+        search_experiments/scripts/record_iqtree_nni.ps1 sim.treefile 100
+        search_experiments/scripts/record_iqtree_nni.ps1 sim.treefile 100 gtr quiet
 #>
 
 param(
@@ -182,7 +182,7 @@ if ($rows.Count -eq 0) {
 }
 
 # --- Step 4: append to the record spreadsheet, same format as
-# recordSpreadsheetPath/appendRecordRow in tree/spr_topology_test.cpp.
+# recordSpreadsheetPath/appendRecordRow in search_experiments/spr_topology_test.cpp.
 $sanitizedModel = ($Model -replace '[^A-Za-z0-9]', '_')
 $csvPath = if ($CsvPathOverride) { $CsvPathOverride } else { "record_${sanitizedModel}_iqtree_nni_ownstart.csv" }
 $needsHeader = (-not (Test-Path $csvPath)) -or ((Get-Item $csvPath).Length -eq 0)

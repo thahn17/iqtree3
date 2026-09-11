@@ -30,12 +30,12 @@ if [ ! -f "$ALIGNMENT" ]; then
     echo "ERROR: $ALIGNMENT not found in $SLURM_SUBMIT_DIR." >&2
     exit 1
 fi
-SUBSAMPLE_SCRIPT="test_scripts/misof_subsample.py"
+SUBSAMPLE_SCRIPT="search_experiments/scripts/misof_subsample.py"
 if [ ! -f "$SUBSAMPLE_SCRIPT" ]; then
     echo "ERROR: $SUBSAMPLE_SCRIPT not found." >&2
     exit 1
 fi
-EXTRACT_MODEL_SCRIPT="test_scripts/extract_iqtree_model.py"
+EXTRACT_MODEL_SCRIPT="search_experiments/scripts/extract_iqtree_model.py"
 if [ ! -f "$EXTRACT_MODEL_SCRIPT" ]; then
     echo "ERROR: $EXTRACT_MODEL_SCRIPT not found." >&2
     exit 1
@@ -223,12 +223,12 @@ extract_model_spec() {
 # the matching .iqtree report) instead of spr_topology_test's plain-LG
 # default. 'gtr' is passed alongside 'model' purely so record/run_id
 # filenames self-document that a richer-than-default model was used (see
-# 'model <spec>'s own comment in tree/spr_topology_test_usage.txt -- 'gtr'
+# 'model <spec>'s own comment in search_experiments/spr_topology_test_usage.txt -- 'gtr'
 # alone would NOT get the real fitted values, and 'model' alone would build
 # the right model but leave record's own filenames looking like a
 # plain-LG run). 'record' appends this run's trajectory to
 # record_LG+FO_fast_notree_gtr.csv (or similar, see recordSpreadsheetPath in
-# tree/spr_topology_test.cpp) as it goes, so a pass that hits the
+# search_experiments/spr_topology_test.cpp) as it goes, so a pass that hits the
 # ${PER_RUN_CAP} cap still leaves its partial progress recorded.
 run_spr() {
     local radius="$1"
@@ -242,7 +242,7 @@ run_spr() {
     if [ "$status" -eq 124 ]; then
         echo "  -- radius=$radius hit the ${PER_RUN_CAP} cap (progress up to that point is already recorded)"
     else
-        # --hillclimb's own success path returns 2, not 0 (tree/spr_topology_test.cpp,
+        # --hillclimb's own success path returns 2, not 0 (search_experiments/spr_topology_test.cpp,
         # runHillClimb's final "return 2;") -- this is the NORMAL outcome, not a failure
         echo "  -- radius=$radius exited with status $status"
     fi
@@ -261,7 +261,7 @@ run_spr() {
 # one pass/radius) starting from that SAME tree/model rather than
 # rebuilding its own BioNJ estimate or falling back to plain LG. No
 # explicit stop condition here by design, same as the rest of
-# this codebase's SLURM scripts (see e.g. test_scripts/record_iqtree_nni.sh's
+# this codebase's SLURM scripts (see e.g. search_experiments/scripts/record_iqtree_nni.sh's
 # own comments) -- every iteration generates its own freshly-timestamped
 # run_id, so a job resubmitted after hitting SLURM's own --time limit just
 # keeps generating new partials rather than needing to resume a specific

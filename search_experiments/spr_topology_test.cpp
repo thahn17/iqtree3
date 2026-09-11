@@ -7,15 +7,15 @@
  *   never touch an alignment or model; the exception is --likelihood,   *
  *   which does load a real alignment to evaluate the tree.              *
  *   Build target: spr_topology_test (see root CMakeLists.txt).          *
- *   Full command reference: tree/spr_topology_test_usage.txt.           *
+ *   Full command reference: search_experiments/spr_topology_test_usage.txt.           *
  *                                                                        *
  *   The self-test's hardcoded start tree mirrors                        *
- *   test_scripts/test_data/spr/six_taxa.start.tree so the fixture file  *
+ *   search_experiments/test_data/spr/six_taxa.start.tree so the fixture file  *
  *   and this test describe the same topology; the test does not read    *
  *   the file itself, to stay runnable from any working directory.       *
  ***************************************************************************/
 
-#include "phylotree.h"
+#include "tree/phylotree.h"
 #include "sprsearch.h"
 #include "alignment/alignment.h"
 #include "model/modelfactory.h"
@@ -53,7 +53,7 @@ const char *aa_model_names_rax[] = {"LG", "WAG", "JTT", "JTTDCMut", "DCMut", "VT
 namespace {
 
 // The SPR search machinery this file used to own outright now lives in
-// tree/sprsearch.{h,cpp}, so IQTree::doSPRSearch can share it (see that
+// search_experiments/sprsearch.{h,cpp}, so IQTree::doSPRSearch can share it (see that
 // header). Pulling the namespace in wholesale keeps every call site
 // below spelled exactly as it was before the move.
 using namespace sprsearch;
@@ -592,7 +592,7 @@ string buildIQTreeStyleStartTree(Alignment *aln, Params &params, const string &m
     greedy, randomized SPR hill-climbing search.
 
     Takes the tree AliSim used to simulate an alignment (see the AliSim
-    command in tree/spr_topology_test_usage.txt for how to produce this
+    command in search_experiments/spr_topology_test_usage.txt for how to produce this
     pair); the alignment file is derived automatically from trueTreeArg by
     AliSim's own default naming convention (<prefix>.treefile paired with
     <prefix>.fa).
@@ -1653,7 +1653,7 @@ int runHillClimb(const string &trueTreeArg, int radius, int maxSteps,
     cout << "start tree time : " << fixed << setprecision(2) << startTreeCpuTime << " sec (CPU)" << endl;
 
     // Everything the step loop needs that outlives an individual step now
-    // lives in SPRSearchOptions/SPRSearchState (tree/sprsearch.h) rather
+    // lives in SPRSearchOptions/SPRSearchState (search_experiments/sprsearch.h) rather
     // than in ~40 locals right here, so IQ-TREE's own stochastic search can
     // re-enter the same loop once per perturbation (see IQTree::doSPRSearch).
     // This command still enters it exactly once, with exactly the values
@@ -2178,7 +2178,7 @@ int runBranchLengthCompare(const string &trueTreeArg, int radius, int maxSteps) 
 }
 
 int runSelfTest() {
-    // mirrors test_scripts/test_data/spr/six_taxa.start.tree: groups (A,C) and (B,D)
+    // mirrors search_experiments/test_data/spr/six_taxa.start.tree: groups (A,C) and (B,D)
     string newick = "((A:0.10,C:0.10):0.10,(B:0.10,D:0.10):0.10,(E:0.10,F:0.10):0.10);";
 
     cout << "=== SPR topology test ===" << endl;
@@ -2689,7 +2689,7 @@ void printUsage(const char *prog) {
     cerr << "                                                         full-sweep-x10 branch lengths, same moves," << endl;
     cerr << "                                                         experimental, slow -- see command's own doc)" << endl;
     cerr << endl;
-    cerr << "  Full reference: tree/spr_topology_test_usage.txt" << endl;
+    cerr << "  Full reference: search_experiments/spr_topology_test_usage.txt" << endl;
 }
 
 /**
@@ -3064,7 +3064,7 @@ bool parseHillClimbFlags(int argc, char **argv, int fromIndex, bool &randomStart
         else if (arg == "weightprune" && weightpruneFlag == PRUNE_UNIFORM) {
             // bare "weightprune" keeps its original meaning (bias toward
             // LONG edges); an explicit "long"/"short" after it picks the
-            // direction -- see PruneWeighting in tree/sprsearch.h
+            // direction -- see PruneWeighting in search_experiments/sprsearch.h
             weightpruneFlag = PRUNE_LONG;
             if (i + 1 < argc) {
                 string next = argv[i + 1];

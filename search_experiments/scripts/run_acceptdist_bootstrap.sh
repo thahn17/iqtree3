@@ -8,6 +8,8 @@
 #
 #   NNI family   control = stock IQ-TREE          (NNI kick  + NNI refinement)
 #                arms    = --accept-dist          (no kick   + NNI refinement)
+#                cont    = --spr-continuous "...weightprune steps 30000"
+#                          (candidate set, then ONE long SPR climb; no loop)
 #
 #   SPR family   control = --spr-perturb + --spr-refine "...weightprune"
 #                                                  (SPR kick  + SPR refinement)
@@ -31,17 +33,17 @@
 # Killing this script and re-running it loses at most the run in flight.
 #
 # Usage:
-#   bash test_scripts/run_acceptdist_bootstrap.sh
+#   bash search_experiments/scripts/run_acceptdist_bootstrap.sh
 #       new randomly-seeded trial: 1 fresh bootstrap alignment x 3 search
 #       seeds = 3 paired blocks. Run it again to ADD another trial; the
 #       pooled summary at the end covers every trial found so far.
 #
-#   BOOTSEED=12345 bash test_scripts/run_acceptdist_bootstrap.sh
+#   BOOTSEED=12345 bash search_experiments/scripts/run_acceptdist_bootstrap.sh
 #       resume/repeat a SPECIFIC trial (the script prints its BOOTSEED at
 #       startup for exactly this purpose)
 #
-#   REPS=3 NIT=30 bash test_scripts/run_acceptdist_bootstrap.sh
-#   SEEDS="777 1234" bash test_scripts/run_acceptdist_bootstrap.sh
+#   REPS=3 NIT=30 bash search_experiments/scripts/run_acceptdist_bootstrap.sh
+#   SEEDS="777 1234" bash search_experiments/scripts/run_acceptdist_bootstrap.sh
 #   SRCALN=/path/to/other.fasta bash ...                # different source data
 #
 set -u
@@ -88,6 +90,14 @@ MODEL="-m GTR+F"
 SPRSPEC="radius 10 fast quiet fullreopt 100 20 weightprune"
 PERTURBSPEC="radius 6"
 
+# The continuous arm: build the candidate set, then one long SPR hill-climb
+# from its best tree in place of the perturb/refine loop (so -n does not
+# apply to it). Judged against the stock NNI control. On the full covid_500
+# alignment (seed 9102026) it gained +55 logL at ~3x that control's CPU --
+# one seed, which is why it is here. CONT=0 leaves it out.
+CONT="${CONT:-1}"
+CONTSPEC="${CONTSPEC:-radius 10 fast quiet fullreopt 100 20 weightprune steps 30000}"
+
 # The accept-dist variants under test. name|spec
 #  - default temperature, no annealing: the convergence-oriented default
 #  - default temperature, annealed
@@ -111,7 +121,7 @@ mkdir -p "$OUTDIR" "$ALNDIR"
 echo "=================================================================="
 echo " TRIAL $TRIAL   (BOOTSEED=$BOOTSEED)"
 echo " to resume THIS trial after an interruption, re-run with:"
-echo "     BOOTSEED=$BOOTSEED bash test_scripts/run_acceptdist_bootstrap.sh"
+echo "     BOOTSEED=$BOOTSEED bash search_experiments/scripts/run_acceptdist_bootstrap.sh"
 echo " running it without BOOTSEED starts a NEW trial instead"
 echo "=================================================================="
 echo "Bootstrap alignments (source=$(basename "$SRCALN"))"
@@ -214,6 +224,10 @@ for r in $(seq 1 "$REPS"); do
       echo " [nni] accept-dist: $spec"
       run "${TAG}_nni_${name}" "$A" "$S" --accept-dist "$spec"
     done
+    if [ "$CONT" = "1" ]; then
+      echo " [nni] continuous SPR: $CONTSPEC"
+      run "${TAG}_nni_cont" "$A" "$S" --spr-continuous "$CONTSPEC"
+    fi
 
     # ---- SPR family ----------------------------------------------------
     echo " [spr] control: --spr-perturb + --spr-refine (SPR kick + SPR refinement)"
@@ -253,7 +267,7 @@ if not rows:
 
 # a "block" is one paired comparison: same alignment, same seed
 blocks = sorted({(k[0], k[1]) for k in rows})
-arms = ["ctrl", "ad05c", "ad05a", "ad2a", "ad2s2a"]
+arms = ["ctrl", "ad05c", "ad05a", "ad2a", "ad2s2a", "cont"]
 
 for fam in ("nni", "spr"):
     present = [a for a in arms if any((r, s, fam, a) in rows for r, s in blocks)]
@@ -320,7 +334,7 @@ if not rows:
 
 trials = sorted({k[0] for k in rows})
 blocks = sorted({(k[0], k[1], k[2]) for k in rows})
-arms = ["ctrl", "ad05c", "ad05a", "ad2a", "ad2s2a"]
+arms = ["ctrl", "ad05c", "ad05a", "ad2a", "ad2s2a", "cont"]
 print("trials=%d  paired blocks=%d  (%s)" % (len(trials), len(blocks), ", ".join(trials)))
 
 for fam in ("nni", "spr"):

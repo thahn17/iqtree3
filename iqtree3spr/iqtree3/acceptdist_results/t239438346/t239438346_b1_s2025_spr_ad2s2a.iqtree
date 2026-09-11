@@ -1,0 +1,1102 @@
+IQ-TREE 3.1.3 built Sep 10 2026
+
+Input file name: /geode3/home/u100/trihahn/Quartz/Desktop/iqtree3spr/iqtree3/acceptdist_results/t239438346/aln/boot1.fasta
+Type of analysis: tree reconstruction
+Random seed number: 2025
+
+REFERENCES
+----------
+
+To cite IQ-TREE 3 please use:
+
+Thomas K.F. Wong, Nhan Ly-Trong, Huaiyan Ren, Piyumal Demotte, Hector Banos,
+Andrew J. Roger, Edward Susko, Chris Bielow, Nicola De Maio, Nick Goldman,
+Matthew W. Hahn, Mario dos Reis, Le Sy Vinh, Gavin Huttley, Robert Lanfear, Bui Quang Minh (2026)
+IQ-TREE 3: Phylogenomic Inference Software using Complex Evolutionary Models.
+Molecular Biology and Evolution, msag117.
+https://doi.org/10.1093/molbev/msag117
+
+SEQUENCE ALIGNMENT
+------------------
+
+Input data: 500 sequences with 29903 nucleotide sites
+Number of constant sites: 26787 (= 89.5796% of all sites)
+Number of invariant (constant or ambiguous constant) sites: 26787 (= 89.5796% of all sites)
+Number of parsimony informative sites: 1218
+Number of distinct site patterns: 6175
+
+SUBSTITUTION PROCESS
+--------------------
+
+Model of substitution: GTR+F
+
+Rate parameter R:
+
+  A-C: 0.5682
+  A-G: 2.2056
+  A-T: 0.2554
+  C-G: 0.3321
+  C-T: 5.7258
+  G-T: 1.0000
+
+State frequencies: (empirical counts from alignment)
+
+  pi(A) = 0.3025
+  pi(C) = 0.1792
+  pi(G) = 0.1936
+  pi(T) = 0.3247
+
+Rate matrix Q:
+
+  A   -0.5162   0.08591    0.3604   0.06996
+  C     0.145    -1.768   0.05426     1.569
+  G    0.5629   0.05021    -0.887     0.274
+  T   0.06517    0.8657    0.1634    -1.094
+
+Model of rate heterogeneity: Uniform
+
+MAXIMUM LIKELIHOOD TREE
+-----------------------
+
+Log-likelihood of the tree: -84086.6955 (s.e. 880.4712)
+Unconstrained log-likelihood (without tree): -240421.6972
+Number of free parameters (#branches + #model parameters): 1005
+Akaike information criterion (AIC) score: 170183.3910
+Corrected Akaike information criterion (AICc) score: 170253.3658
+Bayesian information criterion (BIC) score: 178530.6337
+
+Total tree length (sum of branch lengths): 0.1588
+Sum of internal branch lengths: 0.0400 (25.2169% of tree length)
+
+WARNING: 268 near-zero internal branches (<0.0000) should be treated with caution
+         Such branches are denoted by '**' in the figure below
+
+NOTE: Tree is UNROOTED although outgroup taxon 'IND/NGS-1491/2023' is drawn at root
+
++--IND/NGS-1491/2023
+|
+|                                                                                             +---USA/CA-LACPHL-AY16562/2026
+|                                                                                          +--|
+|                                                                                          |  |           +--BRA/ITpS_3ud_001LV_001/2026
+|                                                                                          |  |        +--|
+|                                                                                          |  |        |  +--BRA/ITpS_JzN_001KS_001/2026
+|                                                                                          |  |     +**|
+|                                                                                          |  |     |  |  +**USA/NMDOH-2026009494/2026
+|                                                                                          |  |     |  +--|
+|                                                                                          |  |     |     |  +**USA/NMDOH-2026007547/2026
+|                                                                                          |  |     |     +**|
+|                                                                                          |  |     |        +**USA/NMDOH-2026009642/2026
+|                                                                                          |  |  +**|
+|                                                                                          |  |  |  +--USA/CO-CDPHE-47205508/2026
+|                                                                                          |  +--|
+|                                                                                          |     +--USA/CA-LACPHL-AY16448/2026
+|                                                                                       +**|
+|                                                                                       |  |       +--USA/CA-LACPHL-AY16324/2026
+|                                                                                       |  |  +----|
+|                                                                                       |  |  |    +**USA/CA-LACPHL-AY16358/2026
+|                                                                                       |  +**|
+|                                                                                       |     +---USA/MD-MDH-13017/2026
+|                                                                                    +--|
+|                                                                                    |  +--USA/CA-LACPHL-AY16518/2026
+|                                                                                 +**|
+|                                                                                 |  +--USA/CA-LACPHL-AY16346/2026
+|                                                                              +**|
+|                                                                              |  +----USA/NMDOH-2026007536/2026
+|                                                                           +**|
+|                                                                           |  |     +--USA/MN-MDH-50273/2026
+|                                                                           |  |  +--|
+|                                                                           |  |  |  |  +**USA/MN-MDH-50560/2026
+|                                                                           |  |  |  +--|
+|                                                                           |  |  |     +**USA/MN-MDH-50528/2026
+|                                                                           |  +--|
+|                                                                           |     +--USA/CA-LACPHL-AY16503/2026
+|                                                                        +**|
+|                                                                        |  |                     +--USA/UT-UPHL-260522547546/2026
+|                                                                        |  |                  +**|
+|                                                                        |  |                  |  |     +--USA/CO-CDPHE-46827475/2026
+|                                                                        |  |                  |  |  +**|
+|                                                                        |  |                  |  |  |  |  +--USA/TX-USAFSAM-S24833/2026
+|                                                                        |  |                  |  |  |  +**|
+|                                                                        |  |                  |  |  |     |  +--USA/MI-MDHHS-SC46010/2026
+|                                                                        |  |                  |  |  |     +**|
+|                                                                        |  |                  |  |  |        +--USA/MN-MDH-50290/2026
+|                                                                        |  |                  |  +**|
+|                                                                        |  |                  |     +--USA/NJ-PHEL-V26005271/2026
+|                                                                        |  |               +**|
+|                                                                        |  |               |  |        +**USA/CO-CDPHE-46827501/2026
+|                                                                        |  |               |  |     +**|
+|                                                                        |  |               |  |     |  +--USA/CO-CDPHE-46827676/2026
+|                                                                        |  |               |  |  +**|
+|                                                                        |  |               |  |  |  +---USA/CA-CDPH-6000023861/2026
+|                                                                        |  |               |  +--|
+|                                                                        |  |               |     +--USA/CO-CDPHE-46827398/2026
+|                                                                        |  |           +---|
+|                                                                        |  |           |   +--USA/CO-CDPHE-46827706/2026
+|                                                                        |  |        +**|
+|                                                                        |  |        |  +--USA/CO-CDPHE-46462158/2026
+|                                                                        |  |     +**|
+|                                                                        |  |     |  +--USA/CO-CDPHE-46462116/2026
+|                                                                        |  |  +--|
+|                                                                        |  |  |  +--USA/DE-DHSS-1952/2026
+|                                                                        |  +--|
+|                                                                        |     +--USA/NJ-USAFSAM-S24816/2026
+|                                                                     +**|
+|                                                                     |  |                       +--USA/GKISBBBI98332/2026
+|                                                                     |  |                    +**|
+|                                                                     |  |                    |  |     +--USA/MD-MDH-13033/2026
+|                                                                     |  |                    |  |  +--|
+|                                                                     |  |                    |  |  |  +--BRA/ITpS_0VC_001LF_001/2026
+|                                                                     |  |                    |  +**|
+|                                                                     |  |                    |     |  +--USA/MA-MASPHL-15436/2026
+|                                                                     |  |                    |     +**|
+|                                                                     |  |                    |        +--USA/CT-DPH-1360624001/2026
+|                                                                     |  |                 +**|
+|                                                                     |  |                 |  +--USA/CT-DPH-1360158001/2026
+|                                                                     |  |              +**|
+|                                                                     |  |              |  +--USA/MD-MDH-13105/2026
+|                                                                     |  |           +**|
+|                                                                     |  |           |  +--USA/CA-LACPHL-AY16305/2026
+|                                                                     |  |        +--|
+|                                                                     |  |        |  |           +**USA/MA-MASPHL-15406/2026
+|                                                                     |  |        |  |        +--|
+|                                                                     |  |        |  |        |  +--BRA/ITpS_deM_001L3_001/2026
+|                                                                     |  |        |  |     +**|
+|                                                                     |  |        |  |     |  |     +--BRA/ITpS_rxz_001L0_001/2026
+|                                                                     |  |        |  |     |  |  +--|
+|                                                                     |  |        |  |     |  |  |  +--BRA/ITpS_OTj_001LW_001/2026
+|                                                                     |  |        |  |     |  +--|
+|                                                                     |  |        |  |     |     |  +------BRA/ITpS_64f_001Ki_001/2026
+|                                                                     |  |        |  |     |     +--|
+|                                                                     |  |        |  |     |        +--BRA/ITpS_c3n_001LN_001/2026
+|                                                                     |  |        |  |  +**|
+|                                                                     |  |        |  |  |  +--USA/CA-LACPHL-AY16327/2026
+|                                                                     |  |        |  +**|
+|                                                                     |  |        |     +----USA/CA-LACPHL-AY16482/2026
+|                                                                     |  |     +--|
+|                                                                     |  |     |  +--USA/MN-MDH-50482/2026
+|                                                                     |  |  +**|
+|                                                                     |  |  |  |                                      +**USA/GKISBBBF12276/2026
+|                                                                     |  |  |  |                                   +**|
+|                                                                     |  |  |  |                                   |  |  +--USA/CO-CDPHE-47205552/2026
+|                                                                     |  |  |  |                                   |  +--|
+|                                                                     |  |  |  |                                   |     +**USA/CO-CDPHE-47205504/2026
+|                                                                     |  |  |  |                                +**|
+|                                                                     |  |  |  |                                |  +----USA/MD-MDH-13282/2026
+|                                                                     |  |  |  |                             +--|
+|                                                                     |  |  |  |                             |  |     +--USA/MD-MDH-13304/2026
+|                                                                     |  |  |  |                             |  |  +**|
+|                                                                     |  |  |  |                             |  |  |  |     +--USA/MD-MDH-13291/2026
+|                                                                     |  |  |  |                             |  |  |  |  +**|
+|                                                                     |  |  |  |                             |  |  |  |  |  |  +--USA/CA-LACPHL-AY16578/2026
+|                                                                     |  |  |  |                             |  |  |  |  |  +--|
+|                                                                     |  |  |  |                             |  |  |  |  |     +--USA/UT-UPHL-260626169025/2026
+|                                                                     |  |  |  |                             |  |  |  +**|
+|                                                                     |  |  |  |                             |  |  |     +--USA/DE-DHSS-1980/2026
+|                                                                     |  |  |  |                             |  +**|
+|                                                                     |  |  |  |                             |     +**USA/NJ-USAFSAM-S24670/2026
+|                                                                     |  |  |  |                          +**|
+|                                                                     |  |  |  |                          |  |                       +--USA/MN-MDH-50265/2026
+|                                                                     |  |  |  |                          |  |                    +**|
+|                                                                     |  |  |  |                          |  |                    |  |  +----USA/CA-LACPHL-AY16281/2026
+|                                                                     |  |  |  |                          |  |                    |  +**|
+|                                                                     |  |  |  |                          |  |                    |     +--USA/MD-MDH-13081/2026
+|                                                                     |  |  |  |                          |  |                 +**|
+|                                                                     |  |  |  |                          |  |                 |  |              +--USA/MD-MDH-13198/2026
+|                                                                     |  |  |  |                          |  |                 |  |           +--|
+|                                                                     |  |  |  |                          |  |                 |  |           |  +--USA/MN-MDH-50390/2026
+|                                                                     |  |  |  |                          |  |                 |  |        +--|
+|                                                                     |  |  |  |                          |  |                 |  |        |  |  +--USA/CO-CDPHE-47205502/2026
+|                                                                     |  |  |  |                          |  |                 |  |        |  +--|
+|                                                                     |  |  |  |                          |  |                 |  |        |     +--USA/MN-MDH-50438/2026
+|                                                                     |  |  |  |                          |  |                 |  |     +**|
+|                                                                     |  |  |  |                          |  |                 |  |     |  +--USA/VT-26-002116-WGS-01/2026
+|                                                                     |  |  |  |                          |  |                 |  |  +**|
+|                                                                     |  |  |  |                          |  |                 |  |  |  +------USA/UT-UPHL-260522942397/2026
+|                                                                     |  |  |  |                          |  |                 |  +**|
+|                                                                     |  |  |  |                          |  |                 |     |              +--USA/MN-MDH-50294/2026
+|                                                                     |  |  |  |                          |  |                 |     |           +--|
+|                                                                     |  |  |  |                          |  |                 |     |           |  |     +--USA/MN-MDH-50338/2026
+|                                                                     |  |  |  |                          |  |                 |     |           |  |  +**|
+|                                                                     |  |  |  |                          |  |                 |     |           |  |  |  +--USA/MN-MDH-50518/2026
+|                                                                     |  |  |  |                          |  |                 |     |           |  +--|
+|                                                                     |  |  |  |                          |  |                 |     |           |     +**USA/MN-MDH-50333/2026
+|                                                                     |  |  |  |                          |  |                 |     |        +--|
+|                                                                     |  |  |  |                          |  |                 |     |        |  +--USA/PR-CVL-034327/2026
+|                                                                     |  |  |  |                          |  |                 |     |     +**|
+|                                                                     |  |  |  |                          |  |                 |     |     |  +--USA/MD-MDH-13233/2026
+|                                                                     |  |  |  |                          |  |                 |     |  +--|
+|                                                                     |  |  |  |                          |  |                 |     |  |  +----USA/SC-COVID-0006/2026
+|                                                                     |  |  |  |                          |  |                 |     +**|
+|                                                                     |  |  |  |                          |  |                 |        |        +**USA/MN-MDH-50565/2026
+|                                                                     |  |  |  |                          |  |                 |        |     +--|
+|                                                                     |  |  |  |                          |  |                 |        |     |  +--USA/MN-MDH-50379/2026
+|                                                                     |  |  |  |                          |  |                 |        |  +**|
+|                                                                     |  |  |  |                          |  |                 |        |  |  |  +--USA/CO-CDPHE-46827584/2026
+|                                                                     |  |  |  |                          |  |                 |        |  |  +**|
+|                                                                     |  |  |  |                          |  |                 |        |  |     +--USA/CO-CDPHE-46827384/2026
+|                                                                     |  |  |  |                          |  |                 |        +**|
+|                                                                     |  |  |  |                          |  |                 |           |  +--USA/MN-MDH-50440/2026
+|                                                                     |  |  |  |                          |  |                 |           +--|
+|                                                                     |  |  |  |                          |  |                 |              +--USA/TX-DSHS-26968/2026
+|                                                                     |  |  |  |                          |  |              +**|
+|                                                                     |  |  |  |                          |  |              |  |        +--USA/MN-MDH-50245/2026
+|                                                                     |  |  |  |                          |  |              |  |     +--|
+|                                                                     |  |  |  |                          |  |              |  |     |  +--USA/MN-MDH-50492/2026
+|                                                                     |  |  |  |                          |  |              |  |  +**|
+|                                                                     |  |  |  |                          |  |              |  |  |  |  +--USA/MN-MDH-50557/2026
+|                                                                     |  |  |  |                          |  |              |  |  |  +**|
+|                                                                     |  |  |  |                          |  |              |  |  |     +**USA/NJ-PHEL-V26004002/2026
+|                                                                     |  |  |  |                          |  |              |  +--|
+|                                                                     |  |  |  |                          |  |              |     |           +**USA/CA-LACPHL-AY16393/2026
+|                                                                     |  |  |  |                          |  |              |     |        +--|
+|                                                                     |  |  |  |                          |  |              |     |        |  +**USA/CA-LACPHL-AY16442/2026
+|                                                                     |  |  |  |                          |  |              |     |     +--|
+|                                                                     |  |  |  |                          |  |              |     |     |  +--USA/CO-CDPHE-46827400/2026
+|                                                                     |  |  |  |                          |  |              |     |  +**|
+|                                                                     |  |  |  |                          |  |              |     |  |  +**USA/WAPHL-961567/2026
+|                                                                     |  |  |  |                          |  |              |     +**|
+|                                                                     |  |  |  |                          |  |              |        +--USA/CO-CDPHE-46462064/2026
+|                                                                     |  |  |  |                          |  |           +**|
+|                                                                     |  |  |  |                          |  |           |  |  +--USA/MN-MDH-50249/2026
+|                                                                     |  |  |  |                          |  |           |  +--|
+|                                                                     |  |  |  |                          |  |           |     |  +---USA/CO-CDPHE-46462148/2026
+|                                                                     |  |  |  |                          |  |           |     +**|
+|                                                                     |  |  |  |                          |  |           |        +**USA/DE-DHSS-1915/2026
+|                                                                     |  |  |  |                          |  |        +**|
+|                                                                     |  |  |  |                          |  |        |  |              +--USA/DE-DHSS-1970/2026
+|                                                                     |  |  |  |                          |  |        |  |           +**|
+|                                                                     |  |  |  |                          |  |        |  |           |  |  +--USA/TX-DSHS-26925/2026
+|                                                                     |  |  |  |                          |  |        |  |           |  +--|
+|                                                                     |  |  |  |                          |  |        |  |           |     +----USA/NJ-PHEL-V26002673/2026
+|                                                                     |  |  |  |                          |  |        |  |        +--|
+|                                                                     |  |  |  |                          |  |        |  |        |  +----USA/OSPHL11060/2026
+|                                                                     |  |  |  |                          |  |        |  |     +**|
+|                                                                     |  |  |  |                          |  |        |  |     |  +--USA/MN-MDH-50395/2026
+|                                                                     |  |  |  |                          |  |        |  |  +**|
+|                                                                     |  |  |  |                          |  |        |  |  |  |           +--USA/TX-USAFSAM-S24821/2026
+|                                                                     |  |  |  |                          |  |        |  |  |  |        +**|
+|                                                                     |  |  |  |                          |  |        |  |  |  |        |  +--USA/CA-CDPH-6000023868/2026
+|                                                                     |  |  |  |                          |  |        |  |  |  |     +**|
+|                                                                     |  |  |  |                          |  |        |  |  |  |     |  +---USA/MN-MDH-50574/2026
+|                                                                     |  |  |  |                          |  |        |  |  |  |  +--|
+|                                                                     |  |  |  |                          |  |        |  |  |  |  |  |  +--USA/2026CV0214/2026
+|                                                                     |  |  |  |                          |  |        |  |  |  |  |  +--|
+|                                                                     |  |  |  |                          |  |        |  |  |  |  |     +**USA/2026CV0205/2026
+|                                                                     |  |  |  |                          |  |        |  |  |  +**|
+|                                                                     |  |  |  |                          |  |        |  |  |     |  +--USA/MD-MDH-13096/2026
+|                                                                     |  |  |  |                          |  |        |  |  |     +**|
+|                                                                     |  |  |  |                          |  |        |  |  |        |     +--USA/MN-MDH-50234/2026
+|                                                                     |  |  |  |                          |  |        |  |  |        |  +**|
+|                                                                     |  |  |  |                          |  |        |  |  |        |  |  +--USA/NMDOH-2026008748/2026
+|                                                                     |  |  |  |                          |  |        |  |  |        +--|
+|                                                                     |  |  |  |                          |  |        |  |  |           +--USA/OSPHL11050/2026
+|                                                                     |  |  |  |                          |  |        |  +**|
+|                                                                     |  |  |  |                          |  |        |     +--USA/SFO-GKISBBBJ63044/2026
+|                                                                     |  |  |  |                          |  |     +**|
+|                                                                     |  |  |  |                          |  |     |  |     +**USA/VT-26-003219-WGS-01/2026
+|                                                                     |  |  |  |                          |  |     |  |  +--|
+|                                                                     |  |  |  |                          |  |     |  |  |  +**USA/VT-26-003221-WGS-01/2026
+|                                                                     |  |  |  |                          |  |     |  +--|
+|                                                                     |  |  |  |                          |  |     |     +---USA/VT-26-004180-WGS-01/2026
+|                                                                     |  |  |  |                          |  |  +**|
+|                                                                     |  |  |  |                          |  |  |  +--USA/MA-MASPHL-15405/2026
+|                                                                     |  |  |  |                          |  +**|
+|                                                                     |  |  |  |                          |     |                 +--USA/CA-LACPHL-AY16325/2026
+|                                                                     |  |  |  |                          |     |              +--|
+|                                                                     |  |  |  |                          |     |              |  |     +--USA/IL-RIPHL_33822_G/2026
+|                                                                     |  |  |  |                          |     |              |  |  +**|
+|                                                                     |  |  |  |                          |     |              |  |  |  +--USA/CO-CDPHE-46827700/2026
+|                                                                     |  |  |  |                          |     |              |  +**|
+|                                                                     |  |  |  |                          |     |              |     +--USA/MD-MDH-13108/2026
+|                                                                     |  |  |  |                          |     |           +**|
+|                                                                     |  |  |  |                          |     |           |  |     +--USA/AK-USAFSAM-S24804/2026
+|                                                                     |  |  |  |                          |     |           |  |  +--|
+|                                                                     |  |  |  |                          |     |           |  |  |  +--USA/MN-MDH-50548/2026
+|                                                                     |  |  |  |                          |     |           |  +**|
+|                                                                     |  |  |  |                          |     |           |     |     +--USA/MN-MDH-50402/2026
+|                                                                     |  |  |  |                          |     |           |     +-----|
+|                                                                     |  |  |  |                          |     |           |           +--USA/MN-MDH-50246/2026
+|                                                                     |  |  |  |                          |     |        +**|
+|                                                                     |  |  |  |                          |     |        |  +--USA/PR-CVL-034314/2026
+|                                                                     |  |  |  |                          |     |     +**|
+|                                                                     |  |  |  |                          |     |     |  +----USA/CA-LACPHL-AY16552/2026
+|                                                                     |  |  |  |                          |     |  +--|
+|                                                                     |  |  |  |                          |     |  |  +--USA/MD-MDH-13064/2026
+|                                                                     |  |  |  |                          |     +**|
+|                                                                     |  |  |  |                          |        |  +--USA/TN-SPHL-1801/2026
+|                                                                     |  |  |  |                          |        +--|
+|                                                                     |  |  |  |                          |           |     +**USA/UT-UPHL-260626376861/2026
+|                                                                     |  |  |  |                          |           |  +**|
+|                                                                     |  |  |  |                          |           |  |  +**USA/UT-UPHL-260626304148/2026
+|                                                                     |  |  |  |                          |           +--|
+|                                                                     |  |  |  |                          |              |  +**USA/UT-UPHL-260626280036/2026
+|                                                                     |  |  |  |                          |              +**|
+|                                                                     |  |  |  |                          |                 +**USA/UT-UPHL-260626151329/2026
+|                                                                     |  |  |  |                       +**|
+|                                                                     |  |  |  |                       |  +--USA/VT-26-002651-WGS-01/2026
+|                                                                     |  |  |  |                    +**|
+|                                                                     |  |  |  |                    |  +---------USA/MN-MDH-50586/2026
+|                                                                     |  |  |  |                 +--|
+|                                                                     |  |  |  |                 |  +--USA/PR-CVL-034322/2026
+|                                                                     |  |  |  |              +--|
+|                                                                     |  |  |  |              |  +--USA/MD-MDH-13185/2026
+|                                                                     |  |  |  |           +**|
+|                                                                     |  |  |  |           |  |              +**USA/2026CV0201/2026
+|                                                                     |  |  |  |           |  |           +--|
+|                                                                     |  |  |  |           |  |           |  +--USA/MD-MDH-13113/2026
+|                                                                     |  |  |  |           |  |        +--|
+|                                                                     |  |  |  |           |  |        |  |  +---USA/UT-UPHL-260508845387/2026
+|                                                                     |  |  |  |           |  |        |  +**|
+|                                                                     |  |  |  |           |  |        |     |     +--OZ483486
+|                                                                     |  |  |  |           |  |        |     |  +--|
+|                                                                     |  |  |  |           |  |        |     |  |  +--OZ477816
+|                                                                     |  |  |  |           |  |        |     +**|
+|                                                                     |  |  |  |           |  |        |        +--USA/TN-SPHL-1688/2026
+|                                                                     |  |  |  |           |  |     +--|
+|                                                                     |  |  |  |           |  |     |  +--USA/CO-CDPHE-46827532/2026
+|                                                                     |  |  |  |           |  |  +**|
+|                                                                     |  |  |  |           |  |  |  +-----USA/MN-MDH-50187/2026
+|                                                                     |  |  |  |           |  +--|
+|                                                                     |  |  |  |           |     |     +--USA/CA-LACPHL-AY16490/2026
+|                                                                     |  |  |  |           |     |  +**|
+|                                                                     |  |  |  |           |     |  |  +----USA/SFO-GKISBBBH88159/2026
+|                                                                     |  |  |  |           |     +**|
+|                                                                     |  |  |  |           |        |     +--USA/CO-CDPHE-47205554/2026
+|                                                                     |  |  |  |           |        +-----|
+|                                                                     |  |  |  |           |              |  +--USA/CA-LACPHL-AY16563/2026
+|                                                                     |  |  |  |           |              +**|
+|                                                                     |  |  |  |           |                 +--USA/CO-CDPHE-47532080/2026
+|                                                                     |  |  |  |        +**|
+|                                                                     |  |  |  |        |  |                                      +--USA/IL-RIPHL_16307_G/2026
+|                                                                     |  |  |  |        |  |                                   +--|
+|                                                                     |  |  |  |        |  |                                   |  +--USA/MN-MDH-50205/2026
+|                                                                     |  |  |  |        |  |                                +**|
+|                                                                     |  |  |  |        |  |                                |  +---USA/UT-UPHL-260508887091/2026
+|                                                                     |  |  |  |        |  |                             +--|
+|                                                                     |  |  |  |        |  |                             |  +--USA/CA-LACPHL-AY16322/2026
+|                                                                     |  |  |  |        |  |                          +**|
+|                                                                     |  |  |  |        |  |                          |  |              +--OZ504943
+|                                                                     |  |  |  |        |  |                          |  |           +**|
+|                                                                     |  |  |  |        |  |                          |  |           |  |        +--USA/CO-CDPHE-46827704/2026
+|                                                                     |  |  |  |        |  |                          |  |           |  |     +--|
+|                                                                     |  |  |  |        |  |                          |  |           |  |     |  +**USA/CO-CDPHE-46827413/2026
+|                                                                     |  |  |  |        |  |                          |  |           |  |  +--|
+|                                                                     |  |  |  |        |  |                          |  |           |  |  |  +--USA/VT-26-002122-WGS-01/2026
+|                                                                     |  |  |  |        |  |                          |  |           |  +--|
+|                                                                     |  |  |  |        |  |                          |  |           |     |        +--USA/MIA-GKISBBBJ62500/2026
+|                                                                     |  |  |  |        |  |                          |  |           |     |     +**|
+|                                                                     |  |  |  |        |  |                          |  |           |     |     |  +--USA/UT-UPHL-260717032566/2026
+|                                                                     |  |  |  |        |  |                          |  |           |     +-----|
+|                                                                     |  |  |  |        |  |                          |  |           |           +--USA/MN-MDH-50608/2026
+|                                                                     |  |  |  |        |  |                          |  |        +**|
+|                                                                     |  |  |  |        |  |                          |  |        |  +--USA/NJ-PHEL-V26002489/2026
+|                                                                     |  |  |  |        |  |                          |  |     +**|
+|                                                                     |  |  |  |        |  |                          |  |     |  +--USA/PA-DHSS-1938/2026
+|                                                                     |  |  |  |        |  |                          |  |  +**|
+|                                                                     |  |  |  |        |  |                          |  |  |  |  +**USA/MD-MDH-13038/2026
+|                                                                     |  |  |  |        |  |                          |  |  |  +--|
+|                                                                     |  |  |  |        |  |                          |  |  |     +--USA/MD-DHSS-1945/2026
+|                                                                     |  |  |  |        |  |                          |  +**|
+|                                                                     |  |  |  |        |  |                          |     |     +**USA/MIA-GKISBBBJ16643/2026
+|                                                                     |  |  |  |        |  |                          |     |  +--|
+|                                                                     |  |  |  |        |  |                          |     |  |  +**USA/CA-LACPHL-AY16499/2026
+|                                                                     |  |  |  |        |  |                          |     +--|
+|                                                                     |  |  |  |        |  |                          |        |  +--USA/PR-CVL-034332/2026
+|                                                                     |  |  |  |        |  |                          |        +--|
+|                                                                     |  |  |  |        |  |                          |           +--USA/EWR-GKISBBBH63239/2026
+|                                                                     |  |  |  |        |  |                       +**|
+|                                                                     |  |  |  |        |  |                       |  |  +--USA/CA-LACPHL-AY16321/2026
+|                                                                     |  |  |  |        |  |                       |  +--|
+|                                                                     |  |  |  |        |  |                       |     +--USA/UT-UPHL-260417407185/2026
+|                                                                     |  |  |  |        |  |                    +**|
+|                                                                     |  |  |  |        |  |                    |  +--USA/IL-RIPHL_33816_G/2026
+|                                                                     |  |  |  |        |  |                 +**|
+|                                                                     |  |  |  |        |  |                 |  +---USA/CO-CDPHE-46827562/2026
+|                                                                     |  |  |  |        |  |              +**|
+|                                                                     |  |  |  |        |  |              |  |  +--USA/CA-LACPHL-AY16357/2026
+|                                                                     |  |  |  |        |  |              |  +--|
+|                                                                     |  |  |  |        |  |              |     +**USA/CA-LACPHL-AY16329/2026
+|                                                                     |  |  |  |        |  |           +**|
+|                                                                     |  |  |  |        |  |           |  +--USA/CO-CDPHE-46827658/2026
+|                                                                     |  |  |  |        |  |        +**|
+|                                                                     |  |  |  |        |  |        |  +--USA/MN-MDH-50531/2026
+|                                                                     |  |  |  |        |  |     +**|
+|                                                                     |  |  |  |        |  |     |  |  +--USA/MD-MDH-13053/2026
+|                                                                     |  |  |  |        |  |     |  +--|
+|                                                                     |  |  |  |        |  |     |     +--USA/UT-UPHL-260508030218/2026
+|                                                                     |  |  |  |        |  |  +**|
+|                                                                     |  |  |  |        |  |  |  +--USA/CA-LACPHL-AY16278/2026
+|                                                                     |  |  |  |        |  +--|
+|                                                                     |  |  |  |        |     +-----USA/CA-LACPHL-AY16581/2026
+|                                                                     |  |  |  |     +**|
+|                                                                     |  |  |  |     |  |  +---BRA/ITpS_BCK_001LE_001/2026
+|                                                                     |  |  |  |     |  +--|
+|                                                                     |  |  |  |     |     +---USA/MN-MDH-50217/2026
+|                                                                     |  |  |  |  +**|
+|                                                                     |  |  |  |  |  |  +--USA/OSPHL11039/2026
+|                                                                     |  |  |  |  |  +--|
+|                                                                     |  |  |  |  |     +--USA/UT-UPHL-260508325416/2026
+|                                                                     |  |  |  +**|
+|                                                                     |  |  |     |           +--USA/CA-LACPHL-AY16407/2026
+|                                                                     |  |  |     |        +--|
+|                                                                     |  |  |     |        |  +--USA/PR-CVL-034355/2026
+|                                                                     |  |  |     |     +**|
+|                                                                     |  |  |     |     |  |     +--USA/NMDOH-2026011372/2026
+|                                                                     |  |  |     |     |  |  +**|
+|                                                                     |  |  |     |     |  |  |  +--USA/MA-MASPHL-15374/2026
+|                                                                     |  |  |     |     |  +--|
+|                                                                     |  |  |     |     |     |  +--USA/CA-LACPHL-AY16422/2026
+|                                                                     |  |  |     |     |     +--|
+|                                                                     |  |  |     |     |        +--USA/CA-LACPHL-AY16432/2026
+|                                                                     |  |  |     |  +--|
+|                                                                     |  |  |     |  |  |                 +--USA/CO-CDPHE-46827614/2026
+|                                                                     |  |  |     |  |  |              +**|
+|                                                                     |  |  |     |  |  |              |  +--OZ504960
+|                                                                     |  |  |     |  |  |           +--|
+|                                                                     |  |  |     |  |  |           |  |  +--OZ477812
+|                                                                     |  |  |     |  |  |           |  +**|
+|                                                                     |  |  |     |  |  |           |     |        +--OZ477813
+|                                                                     |  |  |     |  |  |           |     |     +**|
+|                                                                     |  |  |     |  |  |           |     |     |  +--USA/MN-MDH-50457/2026
+|                                                                     |  |  |     |  |  |           |     |  +**|
+|                                                                     |  |  |     |  |  |           |     |  |  +--USA/MN-MDH-50576/2026
+|                                                                     |  |  |     |  |  |           |     +**|
+|                                                                     |  |  |     |  |  |           |        +--USA/PR-CVL-034326/2026
+|                                                                     |  |  |     |  |  |        +**|
+|                                                                     |  |  |     |  |  |        |  +--USA/MO-USAFSAM-S24748/2026
+|                                                                     |  |  |     |  |  |     +**|
+|                                                                     |  |  |     |  |  |     |  |  +--USA/MN-MDH-50547/2026
+|                                                                     |  |  |     |  |  |     |  +--|
+|                                                                     |  |  |     |  |  |     |     |  +--USA/NJ-PHEL-V26004010/2026
+|                                                                     |  |  |     |  |  |     |     +**|
+|                                                                     |  |  |     |  |  |     |        +--USA/CO-CDPHE-46827536/2026
+|                                                                     |  |  |     |  |  |  +**|
+|                                                                     |  |  |     |  |  |  |  +--USA/CA-LACPHL-AY16526/2026
+|                                                                     |  |  |     |  |  +**|
+|                                                                     |  |  |     |  |     +------USA/MD-MDH-13227/2026
+|                                                                     |  |  |     +--|
+|                                                                     |  |  |        +----USA/NMDOH-2026007543/2026
+|                                                                     |  +**|
+|                                                                     |     |                            +**USA/MN-MDH-50378/2026
+|                                                                     |     |                         +--|
+|                                                                     |     |                         |  +**USA/MN-MDH-50381/2026
+|                                                                     |     |                    +----|
+|                                                                     |     |                    |    +--USA/MN-MDH-50285/2026
+|                                                                     |     |                 +--|
+|                                                                     |     |                 |  |     +**USA/MN-MDH-50454/2026
+|                                                                     |     |                 |  |  +--|
+|                                                                     |     |                 |  |  |  +**USA/MN-MDH-50455/2026
+|                                                                     |     |                 |  +**|
+|                                                                     |     |                 |     +--USA/CA-LACPHL-AY16263/2026
+|                                                                     |     |              +**|
+|                                                                     |     |              |  |     +--OZ504961
+|                                                                     |     |              |  |  +--|
+|                                                                     |     |              |  |  |  +--OZ475056
+|                                                                     |     |              |  +**|
+|                                                                     |     |              |     +----USA/MN-MDH-50614/2026
+|                                                                     |     |           +--|
+|                                                                     |     |           |  +----BRA/ITpS_umU_001Ko_001/2026
+|                                                                     |     |        +--|
+|                                                                     |     |        |  +----BRA/ITpS_7nR_001KT_001/2026
+|                                                                     |     |     +**|
+|                                                                     |     |     |  |           +--USA/IL-RIPHL_23128_G/2026
+|                                                                     |     |     |  |        +**|
+|                                                                     |     |     |  |        |  +--USA/UT-UPHL-260605914959/2026
+|                                                                     |     |     |  |     +**|
+|                                                                     |     |     |  |     |  +--USA/IL-RIPHL_124810_G/2026
+|                                                                     |     |     |  |  +--|
+|                                                                     |     |     |  |  |  |     +--USA/PR-CVL-034311/2026
+|                                                                     |     |     |  |  |  |  +**|
+|                                                                     |     |     |  |  |  |  |  |  +--USA/CA-LACPHL-AY16437/2026
+|                                                                     |     |     |  |  |  |  |  +**|
+|                                                                     |     |     |  |  |  |  |     +--USA/MN-MDH-50275/2026
+|                                                                     |     |     |  |  |  +--|
+|                                                                     |     |     |  |  |     +--USA/IL-RIPHL_16284_G/2026
+|                                                                     |     |     |  +**|
+|                                                                     |     |     |     |  +--USA/MD-MDH-13026/2026
+|                                                                     |     |     |     +--|
+|                                                                     |     |     |        |           +--USA/IL-RIPHL_16257_G/2026
+|                                                                     |     |     |        |        +**|
+|                                                                     |     |     |        |        |  +---IGS-10285-CVDP-E3EC4BBA-22F9-43F8-99E0-56E3025C1447
+|                                                                     |     |     |        |     +**|
+|                                                                     |     |     |        |     |  +----USA/CA-LACPHL-AY16304/2026
+|                                                                     |     |     |        |  +--|
+|                                                                     |     |     |        |  |  +---USA/MN-MDH-50541/2026
+|                                                                     |     |     |        +**|
+|                                                                     |     |     |           +-----USA/MD-MDH-13109/2026
+|                                                                     |     |  +**|
+|                                                                     |     |  |  +-----USA/VT-26-002117-WGS-01/2026
+|                                                                     |     +**|
+|                                                                     |        +---IGS-10285-CVDP-FC464660-241D-4680-BF42-07CC23514D21
+|                                                                  +**|
+|                                                                  |  |  +--USA/MD-USAFSAM-S24658/2026
+|                                                                  |  +--|
+|                                                                  |     |  +--USA/MN-MDH-50545/2026
+|                                                                  |     +--|
+|                                                                  |        +--USA/2026CV0181/2026
+|                                                               +**|
+|                                                               |  +--IGS-10285-CVDP-9E687F4D-A08C-420F-8A22-41D2E0493493
+|                                                            +**|
+|                                                            |  |  +----USA/MN-MDH-50332/2026
+|                                                            |  +**|
+|                                                            |     |  +---USA/MI-UM-10069809341/2026
+|                                                            |     +**|
+|                                                            |        |  +--USA/SFO-GKISBBBI76750/2026
+|                                                            |        +--|
+|                                                            |           +--USA/AZ-USAFSAM-S24815/2026
+|                                                         +--|
+|                                                         |  +--BRA/ITpS_LQO_001Kr_001/2026
+|                                                      +--|
+|                                                      |  +----USA/MN-MDH-50291/2026
+|                                                   +--|
+|                                                   |  +-----------IGS-10285-CVDP-1190076B-7E7E-4C27-87F7-F921031D2F56
+|                                                +--|
+|                                                |  |                   +--USA/NMDOH-2026010815/2026
+|                                                |  |                +--|
+|                                                |  |                |  +--USA/CA-CDPH-6000023835/2026
+|                                                |  |             +**|
+|                                                |  |             |  +--USA/CO-CDPHE-47205458/2026
+|                                                |  |          +--|
+|                                                |  |          |  +**USA/DE-DHSS-1943/2026
+|                                                |  |       +**|
+|                                                |  |       |  +--USA/MI-UM-10069824164/2026
+|                                                |  |  +----|
+|                                                |  |  |    +-----USA/MN-MDH-50259/2026
+|                                                |  +--|
+|                                                |     |                       +--OZ501497
+|                                                |     |                    +**|
+|                                                |     |                    |  |  +**USA/TX-USAFSAM-S24831/2026
+|                                                |     |                    |  +--|
+|                                                |     |                    |     +--USA/CA-LACPHL-AY16576/2026
+|                                                |     |                 +**|
+|                                                |     |                 |  +--USA/CA-LACPHL-AY16497/2026
+|                                                |     |              +**|
+|                                                |     |              |  +--USA/EWR-GKISBBBJ18072/2026
+|                                                |     |           +**|
+|                                                |     |           |  +--USA/CA-LACPHL-AY16466/2026
+|                                                |     |        +**|
+|                                                |     |        |  +--USA/PR-CVL-034329/2026
+|                                                |     |     +--|
+|                                                |     |     |  |     +--USA/EWR-GKISBBBJ57688/2026
+|                                                |     |     |  |  +**|
+|                                                |     |     |  |  |  +**USA/CA-LACPHL-AY16574/2026
+|                                                |     |     |  +**|
+|                                                |     |     |     +--USA/EWR-GKISBBBJ84864/2026
+|                                                |     |  +--|
+|                                                |     |  |  +--USA/GKISBBBI84878/2026
+|                                                |     +--|
+|                                                |        |            +--USA/CA-LACPHL-AY16489/2026
+|                                                |        |         +--|
+|                                                |        |         |  |     +--OZ477810
+|                                                |        |         |  |  +--|
+|                                                |        |         |  |  |  +--USA/IAD-GKISBBBK78731/2026
+|                                                |        |         |  +**|
+|                                                |        |         |     +--USA/CO-CDPHE-46827694/2026
+|                                                |        |      +**|
+|                                                |        |      |  |           +--USA/NJ-PHEL-V26006265/2026
+|                                                |        |      |  |        +**|
+|                                                |        |      |  |        |  +---USA/JFK-GKISBBBI88434/2026
+|                                                |        |      |  |     +--|
+|                                                |        |      |  |     |  +--USA/JFK-GKISBBBJ79821/2026
+|                                                |        |      |  |  +--|
+|                                                |        |      |  |  |  |     +--USA/IAD-GKISBBBI75218/2026
+|                                                |        |      |  |  |  |  +--|
+|                                                |        |      |  |  |  |  |  +--USA/JFK-GKISBBBJ67693/2026
+|                                                |        |      |  |  |  +**|
+|                                                |        |      |  |  |     |     +--USA/MN-MDH-50552/2026
+|                                                |        |      |  |  |     |  +**|
+|                                                |        |      |  |  |     |  |  |  +--USA/SFO-GKISBBBJ69722/2026
+|                                                |        |      |  |  |     |  |  +--|
+|                                                |        |      |  |  |     |  |     +---USA/JFK-GKISBBBI73014/2026
+|                                                |        |      |  |  |     +**|
+|                                                |        |      |  |  |        +--USA/SFO-GKISBBBJ31970/2026
+|                                                |        |      |  +**|
+|                                                |        |      |     |     +--USA/MD-MDH-13312/2026
+|                                                |        |      |     |  +**|
+|                                                |        |      |     |  |  |  +--USA/IAD-GKISBBBI75768/2026
+|                                                |        |      |     |  |  +--|
+|                                                |        |      |     |  |     +--USA/CO-CDPHE-47532072/2026
+|                                                |        |      |     +**|
+|                                                |        |      |        +----USA/UT-UPHL-260807608873/2026
+|                                                |        +------|
+|                                                |               +----USA/MIA-GKISBBBH72455/2026
+|                                             +--|
+|                                             |  +-----------USA/WA-UW-96997/2026
+|                                          +--|
+|                                          |  |  +--USA/JFK-GKISBBBI94779/2026
+|                                          |  +--|
+|                                          |     |     +--USA/CA-LACPHL-AY16253/2026
+|                                          |     |  +**|
+|                                          |     |  |  |  +---USA/MN-MDH-50401/2026
+|                                          |     |  |  +**|
+|                                          |     |  |     +--USA/NMDOH-2026008749/2026
+|                                          |     +**|
+|                                          |        +--USA/CA-LACPHL-AY16285/2026
+|                                       +--|
+|                                       |  +-------------USA/NJ-PHEL-V26004387/2026
+|                                    +--|
+|                                    |  |  +-------USA/TN-SPHL-1800/2026
+|                                    |  +--|
+|                                    |     +----BRA/LACENAL-270289589/2024
+|                                 +--|
+|                                 |  +--IND/SPHL35/2023
+|                              +--|
+|                              |  |        +--USA/FL-CDC-QDX87530119/2023
+|                              |  |     +**|
+|                              |  |     |  +--IND/hCoV-19_India_MP-AIIMSB_WGS2589_ST_24/2024
+|                              |  |  +**|
+|                              |  |  |  |     +----IND/SPHL52/2023
+|                              |  |  |  |  +**|
+|                              |  |  |  |  |  +**IND/hCoV-19_India_MP-AIIMSB_WGS2581_SA_24/2024
+|                              |  |  |  +--|
+|                              |  |  |     +--CMR/23V-12710_250117021/2023
+|                              |  +**|
+|                              |     +--CHN/BJ-NVSI-20240048/2024
+|                           +--|
+|                           |  |        +---CHN/437-2024/2024
+|                           |  |     +--|
+|                           |  |     |  +----RUS/RUSPrimorye_P677/2024
+|                           |  |  +**|
+|                           |  |  |  +--PNG/VIC-VIDRL-00015354/2024
+|                           |  +**|
+|                           |     +--CHN/89-2024/2024
+|                    +------|
+|                    |      +--USA/TN-SPHL-2370/2024
+|             +------|
+|             |      |                                     +--OZ475044
+|             |      |                                  +**|
+|             |      |                                  |  +--USA/NJ-PHEL-V26004321/2026
+|             |      |                               +--|
+|             |      |                               |  +--USA/SFO-GKISBBBK07138/2026
+|             |      |                            +**|
+|             |      |                            |  |     +--USA/CA-LACPHL-AY16558/2026
+|             |      |                            |  |  +--|
+|             |      |                            |  |  |  +--USA/MN-MDH-50582/2026
+|             |      |                            |  +**|
+|             |      |                            |     +--USA/SFO-GKISBBBJ38567/2026
+|             |      |                         +--|
+|             |      |                         |  +--USA/SFO-GKISBBBJ98662/2026
+|             |      |                      +**|
+|             |      |                      |  +--IGS-10285-CVDP-1B456422-E9E7-4026-80F7-24AFBA690DBA
+|             |      |                   +**|
+|             |      |                   |  |  +---USA/MN-MDH-50241/2026
+|             |      |                   |  +--|
+|             |      |                   |     +-----USA/NJ-PHEL-V26004009/2026
+|             |      |                +**|
+|             |      |                |  +----USA/CA-LACPHL-AY16379/2026
+|             |      |             +**|
+|             |      |             |  |        +----USA/VT-26-001818-WGS-01/2026
+|             |      |             |  |     +--|
+|             |      |             |  |     |  +--USA/CO-CDPHE-46462045/2026
+|             |      |             |  |  +**|
+|             |      |             |  |  |  |                 +--USA/CA-LACPHL-AY16542/2026
+|             |      |             |  |  |  |              +--|
+|             |      |             |  |  |  |              |  |     +--USA/UT-UPHL-260807666605/2026
+|             |      |             |  |  |  |              |  |  +**|
+|             |      |             |  |  |  |              |  |  |  +--USA/CA-LACPHL-AY16439/2026
+|             |      |             |  |  |  |              |  +**|
+|             |      |             |  |  |  |              |     +---USA/SFO-GKISBBBH88026/2026
+|             |      |             |  |  |  |           +--|
+|             |      |             |  |  |  |           |  |        +----USA/CA-LACPHL-AY16462/2026
+|             |      |             |  |  |  |           |  |     +--|
+|             |      |             |  |  |  |           |  |     |  |  +--USA/SEA-GKISBBBJ34592/2026
+|             |      |             |  |  |  |           |  |     |  +--|
+|             |      |             |  |  |  |           |  |     |     +--USA/JFK-GKISBBBI84068/2026
+|             |      |             |  |  |  |           |  |  +--|
+|             |      |             |  |  |  |           |  |  |  +--USA/SFO-GKISBBBJ69724/2026
+|             |      |             |  |  |  |           |  +**|
+|             |      |             |  |  |  |           |     |  +--USA/SFO-GKISBBBJ29429/2026
+|             |      |             |  |  |  |           |     +--|
+|             |      |             |  |  |  |           |        +--USA/GKISBBBI60413/2026
+|             |      |             |  |  |  |        +--|
+|             |      |             |  |  |  |        |  +----USA/UT-UPHL-260717828475/2026
+|             |      |             |  |  |  |     +**|
+|             |      |             |  |  |  |     |  |              +--USA/MD-MDH-13075/2026
+|             |      |             |  |  |  |     |  |           +**|
+|             |      |             |  |  |  |     |  |           |  +--USA/MN-MDH-50433/2026
+|             |      |             |  |  |  |     |  |        +**|
+|             |      |             |  |  |  |     |  |        |  +--USA/MN-MDH-50238/2026
+|             |      |             |  |  |  |     |  |     +--|
+|             |      |             |  |  |  |     |  |     |  +--USA/MN-MDH-50475/2026
+|             |      |             |  |  |  |     |  |  +--|
+|             |      |             |  |  |  |     |  |  |  +--USA/NJ-PHEL-V26002973/2026
+|             |      |             |  |  |  |     |  +**|
+|             |      |             |  |  |  |     |     +--LAO/LOMWRU-2011/2025
+|             |      |             |  |  |  |  +**|
+|             |      |             |  |  |  |  |  |    +--USA/CO-CDPHE-46827452/2026
+|             |      |             |  |  |  |  |  +----|
+|             |      |             |  |  |  |  |       +**USA/CO-CDPHE-46827670/2026
+|             |      |             |  |  |  +**|
+|             |      |             |  |  |     |           +------USA/MD-MDH-12992/2026
+|             |      |             |  |  |     |        +**|
+|             |      |             |  |  |     |        |  +-----USA/NC-USAFSAM-S24676/2026
+|             |      |             |  |  |     |     +**|
+|             |      |             |  |  |     |     |  +---CHN/2025101/2025
+|             |      |             |  |  |     |  +**|
+|             |      |             |  |  |     |  |  |  +---USA/CO-CDPHE-46827624/2026
+|             |      |             |  |  |     |  |  +--|
+|             |      |             |  |  |     |  |     +--USA/MN-MDH-50569/2026
+|             |      |             |  |  |     +**|
+|             |      |             |  |  |        +--CHN/2025089/2025
+|             |      |             |  +**|
+|             |      |             |     |                 +--USA/MN-MDH-50476/2026
+|             |      |             |     |              +--|
+|             |      |             |     |              |  +**USA/MN-MDH-50335/2026
+|             |      |             |     |           +--|
+|             |      |             |     |           |  +----IGS-10285-CVDP-C84434E2-84AC-497D-B204-A814B8458692
+|             |      |             |     |        +**|
+|             |      |             |     |        |  +---USA/MD-MDH-13043/2026
+|             |      |             |     |     +**|
+|             |      |             |     |     |  |                                +--USA/VT-26-001863-WGS-01/2026
+|             |      |             |     |     |  |                             +--|
+|             |      |             |     |     |  |                             |  +----USA/DE-DHSS-1971/2026
+|             |      |             |     |     |  |                          +**|
+|             |      |             |     |     |  |                          |  +--IGS-10285-CVDP-A01FDC38-EB11-4532-BD22-581AD5199A3D
+|             |      |             |     |     |  |                       +**|
+|             |      |             |     |     |  |                       |  +--OZ475059
+|             |      |             |     |     |  |                    +**|
+|             |      |             |     |     |  |                    |  +--USA/DC-CDC-10035861-001/2026
+|             |      |             |     |     |  |                 +**|
+|             |      |             |     |     |  |                 |  +--USA/OSPHL11059/2026
+|             |      |             |     |     |  |              +**|
+|             |      |             |     |     |  |              |  +--USA/NJ-PHEL-V26005261/2026
+|             |      |             |     |     |  |           +**|
+|             |      |             |     |     |  |           |  +--USA/IL-RIPHL_23126_G/2026
+|             |      |             |     |     |  |        +**|
+|             |      |             |     |     |  |        |  |      +--USA/FL-BPHL-0027/2026
+|             |      |             |     |     |  |        |  |   +**|
+|             |      |             |     |     |  |        |  |   |  +**USA/FL-BPHL-0028/2026
+|             |      |             |     |     |  |        |  +---|
+|             |      |             |     |     |  |        |      +--USA/FL-BPHL-0019/2026
+|             |      |             |     |     |  |     +**|
+|             |      |             |     |     |  |     |  +--IGS-10285-CVDP-E50261A8-EA8E-4C99-885C-41FD33C88AD1
+|             |      |             |     |     |  |  +--|
+|             |      |             |     |     |  |  |  +--USA/MD-MDH-13139/2026
+|             |      |             |     |     |  +--|
+|             |      |             |     |     |     |  +--OZ483525
+|             |      |             |     |     |     +**|
+|             |      |             |     |     |        |  +---USA/MN-MDH-50538/2026
+|             |      |             |     |     |        +--|
+|             |      |             |     |     |           +------USA/9000/2026
+|             |      |             |     |  +**|
+|             |      |             |     |  |  +---USA/CA-LACPHL-AY16269/2026
+|             |      |             |     +--|
+|             |      |             |        +----USA/DE-DHSS-1955/2026
+|             |      |    +--------|
+|             |      |    |        |     +--USA/MI-UM-10069997532/2026
+|             |      |    |        |  +--|
+|             |      |    |        |  |  +--USA/IL-RIPHL_16258_G/2026
+|             |      |    |        +**|
+|             |      |    |           |  +----USA/TX-DSHS-26962/2026
+|             |      |    |           +--|
+|             |      |    |              +---USA/CO-CDPHE-47205506/2026
+|             |      +----|
+|             |           +--CHN/372-202407/2024
+|     +-------|
+|     |       +---------CHN/HG/2023
+|  +--|
+|  |  +--------RUS/RUSPrimorye_P236/2023
++--|
+|  |                                                                       +---BGD/GRBL_S11/2020
+|  |                                                                    +**|
+|  |                                                                    |  +--WestBank/AAS56/2021
+|  |                                                                 +**|
+|  |                                                                 |  +---IND/KA-NIMH-SEQ-91/2020
+|  |                                                              +**|
+|  |                                                              |  +----GMB/3030/2021
+|  |                                                           +**|
+|  |                                                           |  |        +----USA/Mayo21726/2020
+|  |                                                           |  |     +--|
+|  |                                                           |  |     |  +------IND/KA-NIMH-SEQ-105/2021
+|  |                                                           |  |  +**|
+|  |                                                           |  |  |  +--MMR/Case176/2020
+|  |                                                           |  +**|
+|  |                                                           |     +--CHN/Qingdao_20426/2020
+|  |                                                        +**|
+|  |                                                        |  +----MW342708
+|  |                                                     +**|
+|  |                                                     |  +--CHN/SH-P193-4-Asia-UAE/2020
+|  |                                                  +**|
+|  |                                                  |  |                                +-----BGD/Laila_593/2021
+|  |                                                  |  |                             +**|
+|  |                                                  |  |                             |  |        +--CHN/CS-Liu/2021
+|  |                                                  |  |                             |  |     +--|
+|  |                                                  |  |                             |  |     |  +--Iraq/KR-SEARCH-120017/2021
+|  |                                                  |  |                             |  |  +--|
+|  |                                                  |  |                             |  |  |  +--IND/CWS_0084_52220027/2021
+|  |                                                  |  |                             |  +**|
+|  |                                                  |  |                             |     +---BRA/RJ-NVBS9672GENOV828356363088/2021
+|  |                                                  |  |                       +-----|
+|  |                                                  |  |                       |     |  +--IDN/10761001096/2021
+|  |                                                  |  |                       |     +**|
+|  |                                                  |  |                       |        +-------MMR/DSMRC046/2021
+|  |                                                  |  |                    +--|
+|  |                                                  |  |                    |  |     +----USA/MN-CDC-IBX854565836419/2021
+|  |                                                  |  |                    |  |  +--|
+|  |                                                  |  |                    |  |  |  |  +--CHN/HK_Silka_1/2021
+|  |                                                  |  |                    |  |  |  +--|
+|  |                                                  |  |                    |  |  |     +--PHL/COVID-75628/2021
+|  |                                                  |  |                    |  +--|
+|  |                                                  |  |                    |     |  +--KEN/SS2025/2021
+|  |                                                  |  |                    |     +--|
+|  |                                                  |  |                    |        |  +--THA/CONI-0882/2021
+|  |                                                  |  |                    |        +--|
+|  |                                                  |  |                    |           +--BGD/Laila_97/2021
+|  |                                                  |  |                 +--|
+|  |                                                  |  |                 |  +----------IND/INSACOG-GBRC1383/2021
+|  |                                                  |  |              +**|
+|  |                                                  |  |              |  |        +**EGY/CPHL-NRC-18/2020
+|  |                                                  |  |              |  |     +--|
+|  |                                                  |  |              |  |     |  +----VEN/LaG1414/2021
+|  |                                                  |  |              |  |  +**|
+|  |                                                  |  |              |  |  |  |                 +--JOR/SEARCH-2586-JOR/2020
+|  |                                                  |  |              |  |  |  |              +--|
+|  |                                                  |  |              |  |  |  |              |  |        +--------FRA/IHUCOVID-018204/2020
+|  |                                                  |  |              |  |  |  |              |  |     +**|
+|  |                                                  |  |              |  |  |  |              |  |     |  |      +--IDN/10752101004/2021
+|  |                                                  |  |              |  |  |  |              |  |     |  |   +**|
+|  |                                                  |  |              |  |  |  |              |  |     |  |   |  +--IDN/10761001042/2021
+|  |                                                  |  |              |  |  |  |              |  |     |  +---|
+|  |                                                  |  |              |  |  |  |              |  |     |      |  +--CHN/S146-1287-246321/2021
+|  |                                                  |  |              |  |  |  |              |  |     |      +**|
+|  |                                                  |  |              |  |  |  |              |  |     |         +--CHN/S150-1309-249759/2021
+|  |                                                  |  |              |  |  |  |              |  |  +**|
+|  |                                                  |  |              |  |  |  |              |  |  |  +----------IDN/10761001008/2020
+|  |                                                  |  |              |  |  |  |              |  +**|
+|  |                                                  |  |              |  |  |  |              |     +--IND/GBRC-371/2020
+|  |                                                  |  |              |  |  |  |           +**|
+|  |                                                  |  |              |  |  |  |           |  +--OU072897
+|  |                                                  |  |              |  |  |  |        +**|
+|  |                                                  |  |              |  |  |  |        |  +--CUB/USAFSAM-S030/2020
+|  |                                                  |  |              |  |  |  |     +**|
+|  |                                                  |  |              |  |  |  |     |  |  +--TUN/TUN-20212249/2021
+|  |                                                  |  |              |  |  |  |     |  +--|
+|  |                                                  |  |              |  |  |  |     |     +--MZ330784
+|  |                                                  |  |              |  |  |  |  +**|
+|  |                                                  |  |              |  |  |  |  |  |  +--TZA/KIDH-03B13/2021
+|  |                                                  |  |              |  |  |  |  |  +--|
+|  |                                                  |  |              |  |  |  |  |     +--CHN/GDIPH-GDPCC-05/2021
+|  |                                                  |  |              |  |  |  +**|
+|  |                                                  |  |              |  |  |     +--IND/GBRC22/2020
+|  |                                                  |  |              |  +**|
+|  |                                                  |  |              |     |                 +--AUS/VIC1364/2020
+|  |                                                  |  |              |     |              +**|
+|  |                                                  |  |              |     |              |  +--KOR/235-Day1/2020
+|  |                                                  |  |              |     |           +--|
+|  |                                                  |  |              |     |           |  +--CHN/SH-P83-A-3-Europe-UK/2020
+|  |                                                  |  |              |     |        +**|
+|  |                                                  |  |              |     |        |  +--IRN/HGRC-01-IPI-8206/2020
+|  |                                                  |  |              |     |     +--|
+|  |                                                  |  |              |     |     |  |  +**PHL/GS/2020
+|  |                                                  |  |              |     |     |  +--|
+|  |                                                  |  |              |     |     |     |     +--TLS/TL15/2020
+|  |                                                  |  |              |     |     |     |  +**|
+|  |                                                  |  |              |     |     |     |  |  +--IND/GBRC114/2020
+|  |                                                  |  |              |     |     |     +**|
+|  |                                                  |  |              |     |     |        +**IND/GMCKN443/2020
+|  |                                                  |  |              |     |  +--|
+|  |                                                  |  |              |     |  |  +--Canisfamiliaris/ECU/DF-44/2021
+|  |                                                  |  |              |     +--|
+|  |                                                  |  |              |        +**IND/GMC-KP1125/2020
+|  |                                                  |  |           +**|
+|  |                                                  |  |           |  +--OY124717
+|  |                                                  |  |        +--|
+|  |                                                  |  |        |  +--GIN/C2/2020
+|  |                                                  |  |     +**|
+|  |                                                  |  |     |  |        +---NGA/BCVL-19050/2021
+|  |                                                  |  |     |  |     +--|
+|  |                                                  |  |     |  |     |  +--NGA/CV528/2020
+|  |                                                  |  |     |  |  +--|
+|  |                                                  |  |     |  |  |  +--SAU/KAIMRC-S578/2021
+|  |                                                  |  |     |  +**|
+|  |                                                  |  |     |     |  +--Japan/Donner396/2021
+|  |                                                  |  |     |     +--|
+|  |                                                  |  |     |        +**Japan/TKYE614862_2020/2020
+|  |                                                  |  |  +**|
+|  |                                                  |  |  |  +--POL/PL_P41/2020
+|  |                                                  |  +**|
+|  |                                                  |     +-----EGY/Third-Wave-EGY-ARMY52/2021
+|  |                                               +**|
+|  |                                               |  +**LKA/COV53/2020
+|  |                                            +**|
+|  |                                            |  |      +--PHL/PH-PGC-00315/2020
+|  |                                            |  |   +**|
+|  |                                            |  |   |  +--Pakistan/UHS-PAK-S86/2021
+|  |                                            |  +---|
+|  |                                            |      +**BGD/BCSIR-SUST-02/2021
+|  |                                 +----------|
+|  |                                 |          |      +---Argentina/UW21052315852/2021
+|  |                                 |          +------|
+|  |                                 |                 +--COL/SEC-0685I/2021
+|  |                          +------|
+|  |                          |      |                +--CHN/S431-821-522924/2022
+|  |                          |      |             +**|
+|  |                          |      |             |  +**NGA/CV4843/2021
+|  |                          |      |          +--|
+|  |                          |      |          |  |  +--OZ071349
+|  |                          |      |          |  +--|
+|  |                          |      |          |     +--MEX/CMX_7257/2022
+|  |                          |      |       +**|
+|  |                          |      |       |  +--USA/FL-BPHL-1969/2022
+|  |                          |      |    +--|
+|  |                          |      |    |  +--BRA/LACENAL-270216363/2022
+|  |                          |      +----|
+|  |                          |           +--BRA/33ABR22L03/2023
+|  |                    +-----|
+|  |                    |     |                                           +--OZ483632
+|  |                    |     |                                        +--|
+|  |                    |     |                                        |  +-----USA/CA-LACPHL-AY16479/2026
+|  |                    |     |                                     +**|
+|  |                    |     |                                     |  |  +--OZ483436
+|  |                    |     |                                     |  +--|
+|  |                    |     |                                     |     +---USA/GKISBBBJ59071/2026
+|  |                    |     |                                  +--|
+|  |                    |     |                                  |  +--OZ495090
+|  |                    |     |                               +--|
+|  |                    |     |                               |  +-----OZ483646
+|  |                    |     |                          +----|
+|  |                    |     |                          |    +--USA/DE-DHSS-1981/2026
+|  |                    |     +--------------------------|
+|  |                    |                                |                             +--USA/MA-MASPHL-15407/2026
+|  |                    |                                |                          +**|
+|  |                    |                                |                          |  +--USA/CO-CDPHE-46827600/2026
+|  |                    |                                |                       +**|
+|  |                    |                                |                       |  +--USA/UT-UPHL-260814140606/2026
+|  |                    |                                |                    +**|
+|  |                    |                                |                    |  +----USA/VT-26-004040-WGS-01/2026
+|  |                    |                                |                 +--|
+|  |                    |                                |                 |  +--USA/CO-CDPHE-47205542/2026
+|  |                    |                                |              +--|
+|  |                    |                                |              |  |  +--USA/DE-DHSS-1959/2026
+|  |                    |                                |              |  +--|
+|  |                    |                                |              |     +--USA/MD-MDH-13264/2026
+|  |                    |                                |           +**|
+|  |                    |                                |           |  |     +**USA/MA-MASPHL-15427/2026
+|  |                    |                                |           |  |  +**|
+|  |                    |                                |           |  |  |  +--USA/VT-26-004043-WGS-01/2026
+|  |                    |                                |           |  +**|
+|  |                    |                                |           |     |  +--USA/DE-DHSS-1930/2026
+|  |                    |                                |           |     +--|
+|  |                    |                                |           |        +**USA/MD-MDH-13086/2026
+|  |                    |                                |        +--|
+|  |                    |                                |        |  +--USA/MA-MASPHL-15393/2026
+|  |                    |                                |     +**|
+|  |                    |                                |     |  |     +--USA/MN-MDH-50257/2026
+|  |                    |                                |     |  |  +**|
+|  |                    |                                |     |  |  |  +--OZ483452
+|  |                    |                                |     |  +--|
+|  |                    |                                |     |     |           +**OZ483541
+|  |                    |                                |     |     |        +--|
+|  |                    |                                |     |     |        |  +--OZ483454
+|  |                    |                                |     |     |     +--|
+|  |                    |                                |     |     |     |  +--OZ504930
+|  |                    |                                |     |     |  +--|
+|  |                    |                                |     |     |  |  +-----USA/CO-CDPHE-47205536/2026
+|  |                    |                                |     |     +**|
+|  |                    |                                |     |        |  +--OZ504933
+|  |                    |                                |     |        +--|
+|  |                    |                                |     |           +--IGS-10285-CVDP-D0F64B99-0E7F-469F-A132-D369290FD038
+|  |                    |                                |  +--|
+|  |                    |                                |  |  |  +--USA/MN-MDH-50507/2026
+|  |                    |                                |  |  +--|
+|  |                    |                                |  |     +--OZ483377
+|  |                    |                                +--|
+|  |                    |                                   |  +**OZ483376
+|  |                    |                                   +--|
+|  |                    |                                      +--OZ483624
+|  |                 +--|
+|  |                 |  |           +--IND/hCoV-19_India_MP-AIIMSB_WGS2585_ST_22/2022
+|  |                 |  |        +**|
+|  |                 |  |        |  +---RUS/9774/2022
+|  |                 |  |     +--|
+|  |                 |  |     |  +--CHN/2022A_XG32601/2022
+|  |                 |  |  +--|
+|  |                 |  |  |  |     +--Austria/Risch-20220714R12733/2022
+|  |                 |  |  |  |  +--|
+|  |                 |  |  |  |  |  +----------------------------------------USA/MN-MDH-50564/2026
+|  |                 |  |  |  +**|
+|  |                 |  |  |     +--Atelesfusciceps/ECU/Atl.3_feces/2022
+|  |                 |  +--|
+|  |                 |     +---IND/NGS-720/2022
+|  |              +**|
+|  |              |  |  +--CHN/S441-1341-110441/2022
+|  |              |  +**|
+|  |              |     |     +--CHN/LA-3345/2022
+|  |              |     |  +**|
+|  |              |     |  |  +**CHN/NJ_16/2022
+|  |              |     +**|
+|  |              |        |  +--CHN/S842-5086-645236/2022
+|  |              |        +--|
+|  |              |           +--NIC/CNDR-13222-01/2022
+|  |           +**|
+|  |           |  +--MYS/M36_10736/2022
+|  |        +**|
+|  |        |  +--BGD/BD_B_220309_04/2022
+|  |     +**|
+|  |     |  |  +--IND/NIB259321/2022
+|  |     |  +**|
+|  |     |     +--IND/LNHD132/2022
+|  |  +--|
+|  |  |  |  +--USA/MD-CDC-LC0600345/2022
+|  |  |  +--|
+|  |  |     +--IND/NGS-755/2022
+|  +--|
+|     +---------OX942935
+|
+|                       +--CHN/SARS-CoV-2_XBB/2023
+|                    +--|
+|                    |  +--QAT/DA-USAFSAM-S21612/2023
+|                 +--|
+|                 |  +----POL/220-Day1/2023
+|              +--|
+|              |  |     +----CHN/GDCDC_SZHG_2251/2023
+|              |  |  +**|
+|              |  |  |  |  +---CHN/GDCDC_GZHG_1146/2023
+|              |  |  |  +**|
+|              |  |  |     +---CHN/GDCDC_GZ_0281/2023
+|              |  +**|
+|              |     |     +----IND/NICPR437/2023
+|              |     |  +**|
+|              |     |  |  +--IND/hCoV-19_India_MP-AIIMSB_WGS2582_SW_23/2023
+|              |     +--|
+|              |        +--Japan/PG-573477/2023
+|           +**|
+|           |  |  +--ZAF/179-Day1/2023
+|           |  +**|
+|           |     +--VNM/NHTD-OUCRU3930/2023
+|        +--|
+|        |  +--OZ370674
+|     +--|
+|     |  +**KWT/JA-USAFSAM-S21169/2022
+|  +--|
+|  |  +--IND/NGS-1439/2023
++**|
+   +--IND/Sample124/2022
+
+Tree in newick format:
+
+(IND/NGS-1491/2023:0.0001337897,(((((((((((((((((((((((((((USA/CA-LACPHL-AY16562/2026:0.0003690129,((((BRA/ITpS_3ud_001LV_001/2026:0.0002021483,BRA/ITpS_JzN_001KS_001/2026:0.0002358056):0.0000668889,(USA/NMDOH-2026009494/2026:0.0000010000,(USA/NMDOH-2026007547/2026:0.0000020000,USA/NMDOH-2026009642/2026:0.0000020000):0.0000010000):0.0002357985):0.0000010000,USA/CO-CDPHE-47205508/2026:0.0002714287):0.0000010000,USA/CA-LACPHL-AY16448/2026:0.0002394706):0.0000671564):0.0001015202,((USA/CA-LACPHL-AY16324/2026:0.0001337897,USA/CA-LACPHL-AY16358/2026:0.0000010000):0.0004368463,USA/MD-MDH-13017/2026:0.0004089945):0.0000010000):0.0000010000,USA/CA-LACPHL-AY16518/2026:0.0001003378):0.0000679550,USA/CA-LACPHL-AY16346/2026:0.0002687809):0.0000029598,USA/NMDOH-2026007536/2026:0.0004379211):0.0000333565,((USA/MN-MDH-50273/2026:0.0001693937,(USA/MN-MDH-50560/2026:0.0000010000,USA/MN-MDH-50528/2026:0.0000010000):0.0002710457):0.0000334430,USA/CA-LACPHL-AY16503/2026:0.0002408546):0.0000668889):0.0000020000,(((((((USA/UT-UPHL-260522547546/2026:0.0000668889,((USA/CO-CDPHE-46827475/2026:0.0002196727,(USA/TX-USAFSAM-S24833/2026:0.0002040887,(USA/MI-MDHHS-SC46010/2026:0.0001337897,USA/MN-MDH-50290/2026:0.0000335818):0.0000010000):0.0000010000):0.0000010000,USA/NJ-PHEL-V26005271/2026:0.0001003378):0.0000020000):0.0000010000,(((USA/CO-CDPHE-46827501/2026:0.0000020000,USA/CO-CDPHE-46827676/2026:0.0001775232):0.0000010000,USA/CA-CDPH-6000023861/2026:0.0004032117):0.0000010000,USA/CO-CDPHE-46827398/2026:0.0001817256):0.0000344438):0.0000020000,USA/CO-CDPHE-46827706/2026:0.0000401252):0.0003685051,USA/CO-CDPHE-46462158/2026:0.0001625568):0.0000010000,USA/CO-CDPHE-46462116/2026:0.0002989327):0.0000010000,USA/DE-DHSS-1952/2026:0.0002806160):0.0001007627,USA/NJ-USAFSAM-S24816/2026:0.0002357902):0.0001003378):0.0000010000,((((((((USA/GKISBBBI98332/2026:0.0002711354,((USA/MD-MDH-13033/2026:0.0002066630,BRA/ITpS_0VC_001LF_001/2026:0.0002530805):0.0000844427,(USA/MA-MASPHL-15436/2026:0.0001337897,USA/CT-DPH-1360624001/2026:0.0000679869):0.0000010000):0.0000010000):0.0000010000,USA/CT-DPH-1360158001/2026:0.0003049367):0.0000010000,USA/MD-MDH-13105/2026:0.0003387563):0.0000022500,USA/CA-LACPHL-AY16305/2026:0.0000693520):0.0000010000,((((USA/MA-MASPHL-15406/2026:0.0000010000,BRA/ITpS_deM_001L3_001/2026:0.0002021544):0.0002007025,((BRA/ITpS_rxz_001L0_001/2026:0.0003367508,BRA/ITpS_OTj_001LW_001/2026:0.0001337897):0.0000334430,(BRA/ITpS_64f_001Ki_001/2026:0.0006588889,BRA/ITpS_c3n_001LN_001/2026:0.0003031281):0.0000865621):0.0000334430):0.0000010000,USA/CA-LACPHL-AY16327/2026:0.0002697909):0.0000010000,USA/CA-LACPHL-AY16482/2026:0.0004875045):0.0000010000):0.0000334430,USA/MN-MDH-50482/2026:0.0002832231):0.0000668889,(((((((((((((USA/GKISBBBF12276/2026:0.0000325087,(USA/CO-CDPHE-47205552/2026:0.0001374197,USA/CO-CDPHE-47205504/2026:0.0000010000):0.0001703134):0.0000010000,USA/MD-MDH-13282/2026:0.0004558544):0.0000010000,((USA/MD-MDH-13304/2026:0.0001756689,((USA/MD-MDH-13291/2026:0.0002817792,(USA/CA-LACPHL-AY16578/2026:0.0001003378,USA/UT-UPHL-260626169025/2026:0.0001337897):0.0001008109):0.0000010000,USA/DE-DHSS-1980/2026:0.0001686625):0.0000010000):0.0000010000,USA/NJ-USAFSAM-S24670/2026:0.0000333915):0.0000010000):0.0002686272,((((((((USA/MN-MDH-50265/2026:0.0002710405,(USA/CA-LACPHL-AY16281/2026:0.0004801990,USA/MD-MDH-13081/2026:0.0001361928):0.0000333526):0.0000029361,(((((USA/MD-MDH-13198/2026:0.0001024399,USA/MN-MDH-50390/2026:0.0002020756):0.0001013727,(USA/CO-CDPHE-47205502/2026:0.0001362855,USA/MN-MDH-50438/2026:0.0001755576):0.0001003378):0.0000668889,USA/VT-26-002116-WGS-01/2026:0.0000334430):0.0000010000,USA/UT-UPHL-260522942397/2026:0.0006315564):0.0000010000,(((((USA/MN-MDH-50294/2026:0.0002110688,((USA/MN-MDH-50338/2026:0.0000344430,USA/MN-MDH-50518/2026:0.0000707829):0.0000010000,USA/MN-MDH-50333/2026:0.0000010000):0.0001355683):0.0000334430,USA/PR-CVL-034327/2026:0.0003365220):0.0001672446,USA/MD-MDH-13233/2026:0.0001371989):0.0000010000,USA/SC-COVID-0006/2026:0.0004714102):0.0000668889,(((USA/MN-MDH-50565/2026:0.0000010000,USA/MN-MDH-50379/2026:0.0001683916):0.0001337897,(USA/CO-CDPHE-46827584/2026:0.0002351794,USA/CO-CDPHE-46827384/2026:0.0000842840):0.0000010000):0.0000020000,(USA/MN-MDH-50440/2026:0.0002457538,USA/TX-DSHS-26968/2026:0.0001686969):0.0000668889):0.0000010000):0.0000020000):0.0000020000):0.0000010000,(((USA/MN-MDH-50245/2026:0.0002036877,USA/MN-MDH-50492/2026:0.0001357602):0.0000678889,(USA/MN-MDH-50557/2026:0.0001337897,USA/NJ-PHEL-V26004002/2026:0.0000010000):0.0000010000):0.0000010000,((((USA/CA-LACPHL-AY16393/2026:0.0000010000,USA/CA-LACPHL-AY16442/2026:0.0000010000):0.0001962056,USA/CO-CDPHE-46827400/2026:0.0001110051):0.0000391168,USA/WAPHL-961567/2026:0.0000010000):0.0000010000,USA/CO-CDPHE-46462064/2026:0.0003267171):0.0000010000):0.0001003378):0.0000010000,(USA/MN-MDH-50249/2026:0.0001043767,(USA/CO-CDPHE-46462148/2026:0.0004155669,USA/DE-DHSS-1915/2026:0.0000010000):0.0000010000):0.0000672093):0.0000010000,(((((USA/DE-DHSS-1970/2026:0.0002023908,(USA/TX-DSHS-26925/2026:0.0001349166,USA/NJ-PHEL-V26002673/2026:0.0005062235):0.0001687224):0.0000020224,USA/OSPHL11060/2026:0.0005062027):0.0000671934,USA/MN-MDH-50395/2026:0.0002062101):0.0000020000,((((USA/TX-USAFSAM-S24821/2026:0.0001009932,USA/CA-CDPH-6000023868/2026:0.0000668889):0.0000014872,USA/MN-MDH-50574/2026:0.0003510312):0.0000014872,(USA/2026CV0214/2026:0.0000334430,USA/2026CV0205/2026:0.0000010000):0.0000335950):0.0001347897,(USA/MD-MDH-13096/2026:0.0002360259,((USA/MN-MDH-50234/2026:0.0000334430,USA/NMDOH-2026008748/2026:0.0001337897):0.0000010000,USA/OSPHL11050/2026:0.0000334430):0.0000334430):0.0000010000):0.0000010000):0.0000020000,USA/SFO-GKISBBBJ63044/2026:0.0002871714):0.0000010000):0.0000010000,((USA/VT-26-003219-WGS-01/2026:0.0000010000,USA/VT-26-003221-WGS-01/2026:0.0000010000):0.0000668889,USA/VT-26-004180-WGS-01/2026:0.0004055315):0.0001349919):0.0000010000,USA/MA-MASPHL-15405/2026:0.0001692475):0.0000010000,((((((USA/CA-LACPHL-AY16325/2026:0.0001672446,((USA/IL-RIPHL_33822_G/2026:0.0001347897,USA/CO-CDPHE-46827700/2026:0.0002470814):0.0000010000,USA/MD-MDH-13108/2026:0.0001013378):0.0000010000):0.0001672446,((USA/AK-USAFSAM-S24804/2026:0.0002737842,USA/MN-MDH-50548/2026:0.0001615222):0.0000402660,(USA/MN-MDH-50402/2026:0.0001348019,USA/MN-MDH-50246/2026:0.0001017498):0.0006065768):0.0000010000):0.0000010000,USA/PR-CVL-034314/2026:0.0003378639):0.0000010000,USA/CA-LACPHL-AY16552/2026:0.0004368791):0.0000010000,USA/MD-MDH-13064/2026:0.0002441119):0.0000671393,(USA/TN-SPHL-1801/2026:0.0002239260,((USA/UT-UPHL-260626376861/2026:0.0000010000,USA/UT-UPHL-260626304148/2026:0.0000020000):0.0000010000,(USA/UT-UPHL-260626280036/2026:0.0000010000,USA/UT-UPHL-260626151329/2026:0.0000010000):0.0000010000):0.0003055737):0.0000446586):0.0000020000):0.0000010000):0.0000010000,USA/VT-26-002651-WGS-01/2026:0.0003031463):0.0000010000,USA/MN-MDH-50586/2026:0.0009244962):0.0000010000,USA/PR-CVL-034322/2026:0.0002027233):0.0000730386,USA/MD-MDH-13185/2026:0.0003132672):0.0003295445,(((((USA/2026CV0201/2026:0.0000010000,USA/MD-MDH-13113/2026:0.0001351814):0.0001003378,(USA/UT-UPHL-260508845387/2026:0.0004326353,((OZ483486:0.0000346821,OZ477816:0.0001691164):0.0002367541,USA/TN-SPHL-1688/2026:0.0000705748):0.0000010000):0.0000010000):0.0000444789,USA/CO-CDPHE-46827532/2026:0.0001188103):0.0000896081,USA/MN-MDH-50187/2026:0.0005946303):0.0000010000,((USA/CA-LACPHL-AY16490/2026:0.0002007025,USA/SFO-GKISBBBH88159/2026:0.0004698946):0.0000334128,(USA/CO-CDPHE-47205554/2026:0.0001006340,(USA/CA-LACPHL-AY16563/2026:0.0000344430,USA/CO-CDPHE-47532080/2026:0.0000736415):0.0000025365):0.0005379238):0.0000029652):0.0000334457):0.0000029652,(((((((((((((USA/IL-RIPHL_16307_G/2026:0.0003438453,USA/MN-MDH-50205/2026:0.0001359114):0.0000674924,USA/UT-UPHL-260508887091/2026:0.0004048913):0.0000020139,USA/CA-LACPHL-AY16322/2026:0.0003298496):0.0000731143,(((((OZ504943:0.0003058491,(((USA/CO-CDPHE-46827704/2026:0.0001757516,USA/CO-CDPHE-46827413/2026:0.0000010000):0.0001406101,USA/VT-26-002122-WGS-01/2026:0.0000346492):0.0000339747,((USA/MIA-GKISBBBJ62500/2026:0.0002636382,USA/UT-UPHL-260717032566/2026:0.0001710481):0.0000025820,USA/MN-MDH-50608/2026:0.0002379087):0.0005439271):0.0000338896):0.0000010000,USA/NJ-PHEL-V26002489/2026:0.0001977663):0.0000010000,USA/PA-DHSS-1938/2026:0.0000668889):0.0000010000,(USA/MD-MDH-13038/2026:0.0000010000,USA/MD-DHSS-1945/2026:0.0000734931):0.0002968176):0.0000010000,((USA/MIA-GKISBBBJ16643/2026:0.0000010000,USA/CA-LACPHL-AY16499/2026:0.0000010000):0.0001003378,(USA/PR-CVL-034332/2026:0.0000697103,USA/EWR-GKISBBBH63239/2026:0.0001388164):0.0002692093):0.0002341633):0.0000010000):0.0000010000,(USA/CA-LACPHL-AY16321/2026:0.0001337897,USA/UT-UPHL-260417407185/2026:0.0000334430):0.0001672446):0.0000014970,USA/IL-RIPHL_33816_G/2026:0.0000691862):0.0000010000,USA/CO-CDPHE-46827562/2026:0.0004204152):0.0000020000,(USA/CA-LACPHL-AY16357/2026:0.0000387276,USA/CA-LACPHL-AY16329/2026:0.0000010000):0.0002650335):0.0000010000,USA/CO-CDPHE-46827658/2026:0.0002761804):0.0000010000,USA/MN-MDH-50531/2026:0.0001711864):0.0000020000,(USA/MD-MDH-13053/2026:0.0002517115,USA/UT-UPHL-260508030218/2026:0.0001392493):0.0000334430):0.0000010000,USA/CA-LACPHL-AY16278/2026:0.0003058576):0.0000010000,USA/CA-LACPHL-AY16581/2026:0.0005723026):0.0000986705):0.0000020069,(BRA/ITpS_BCK_001LE_001/2026:0.0003707588,USA/MN-MDH-50217/2026:0.0004047507):0.0000664180):0.0000010000,(USA/OSPHL11039/2026:0.0003242682,USA/UT-UPHL-260508325416/2026:0.0001922546):0.0000803852):0.0000010000,((((USA/CA-LACPHL-AY16407/2026:0.0000668889,USA/PR-CVL-034355/2026:0.0000347304):0.0002352145,((USA/NMDOH-2026011372/2026:0.0002367662,USA/MA-MASPHL-15374/2026:0.0002688756):0.0000028284,(USA/CA-LACPHL-AY16422/2026:0.0001711023,USA/CA-LACPHL-AY16432/2026:0.0000334430):0.0001337897):0.0000334586):0.0000014764,((((((USA/CO-CDPHE-46827614/2026:0.0001142716,OZ504960:0.0000668889):0.0000010000,(OZ477812:0.0002019612,(((OZ477813:0.0001008549,USA/MN-MDH-50457/2026:0.0001806929):0.0000010000,USA/MN-MDH-50576/2026:0.0001684110):0.0000010000,USA/PR-CVL-034326/2026:0.0000668889):0.0000010000):0.0000010000):0.0001003378,USA/MO-USAFSAM-S24748/2026:0.0001003378):0.0000020000,(USA/MN-MDH-50547/2026:0.0002397852,(USA/NJ-PHEL-V26004010/2026:0.0001349426,USA/CO-CDPHE-46827536/2026:0.0002547208):0.0000020138):0.0001003378):0.0000013550,USA/CA-LACPHL-AY16526/2026:0.0001013378):0.0000013550,USA/MD-MDH-13227/2026:0.0006186338):0.0000014764):0.0001003378,USA/NMDOH-2026007543/2026:0.0004851742):0.0002688004):0.0000010000):0.0000010000,(((((((((USA/MN-MDH-50378/2026:0.0000010000,USA/MN-MDH-50381/2026:0.0000010000):0.0001684483,USA/MN-MDH-50285/2026:0.0000668889):0.0004379193,((USA/MN-MDH-50454/2026:0.0000010000,USA/MN-MDH-50455/2026:0.0000010000):0.0001337897,USA/CA-LACPHL-AY16263/2026:0.0001337897):0.0000010000):0.0002354964,((OZ504961:0.0001461622,OZ475056:0.0001255520):0.0000419667,USA/MN-MDH-50614/2026:0.0004380034):0.0000010000):0.0000010000,BRA/ITpS_umU_001Ko_001/2026:0.0004716964):0.0000334430,BRA/ITpS_7nR_001KT_001/2026:0.0004717625):0.0000334430,((((USA/IL-RIPHL_23128_G/2026:0.0001013378,USA/UT-UPHL-260605914959/2026:0.0000668889):0.0000010000,USA/IL-RIPHL_124810_G/2026:0.0003374918):0.0000010000,((USA/PR-CVL-034311/2026:0.0000892230,(USA/CA-LACPHL-AY16437/2026:0.0001031861,USA/MN-MDH-50275/2026:0.0001759758):0.0000010000):0.0000010000,USA/IL-RIPHL_16284_G/2026:0.0003132448):0.0000444431):0.0002017025,(USA/MD-MDH-13026/2026:0.0002762474,((((USA/IL-RIPHL_16257_G/2026:0.0001347966,IGS-10285-CVDP-E3EC4BBA-22F9-43F8-99E0-56E3025C1447:0.0003915766):0.0000010000,USA/CA-LACPHL-AY16304/2026:0.0005087631):0.0000010000,USA/MN-MDH-50541/2026:0.0004076920):0.0002017025,USA/MD-MDH-13109/2026:0.0005828238):0.0000010000):0.0000334430):0.0000020000):0.0000010000,USA/VT-26-002117-WGS-01/2026:0.0006074329):0.0000010000,IGS-10285-CVDP-FC464660-241D-4680-BF42-07CC23514D21:0.0003769474):0.0000010000):0.0000020000):0.0000020000,(USA/MD-USAFSAM-S24658/2026:0.0003032784,(USA/MN-MDH-50545/2026:0.0001003378,USA/2026CV0181/2026:0.0002061887):0.0001003378):0.0002030296):0.0000010000,IGS-10285-CVDP-9E687F4D-A08C-420F-8A22-41D2E0493493:0.0002694848):0.0000020000,(USA/MN-MDH-50332/2026:0.0005053909,(USA/MI-UM-10069809341/2026:0.0004051835,(USA/SFO-GKISBBBI76750/2026:0.0001337897,USA/AZ-USAFSAM-S24815/2026:0.0003058952):0.0000343137):0.0000010000):0.0000010000):0.0000010000,BRA/ITpS_LQO_001Kr_001/2026:0.0002357436):0.0002230593,USA/MN-MDH-50291/2026:0.0004913832):0.0001003409,IGS-10285-CVDP-1190076B-7E7E-4C27-87F7-F921031D2F56:0.0010676799):0.0000457567,((((((USA/NMDOH-2026010815/2026:0.0002435973,USA/CA-CDPH-6000023835/2026:0.0001053304):0.0000691286,USA/CO-CDPHE-47205458/2026:0.0001363162):0.0000010000,USA/DE-DHSS-1943/2026:0.0000010000):0.0002692762,USA/MI-UM-10069824164/2026:0.0003375210):0.0000010000,USA/MN-MDH-50259/2026:0.0005566258):0.0004935136,((((((((OZ501497:0.0000668889,(USA/TX-USAFSAM-S24831/2026:0.0000010000,USA/CA-LACPHL-AY16576/2026:0.0001337897):0.0000334968):0.0000010000,USA/CA-LACPHL-AY16497/2026:0.0002351701):0.0000010000,USA/EWR-GKISBBBJ18072/2026:0.0001337897):0.0000010000,USA/CA-LACPHL-AY16466/2026:0.0002697769):0.0000010000,USA/PR-CVL-034329/2026:0.0001337897):0.0000010000,((USA/EWR-GKISBBBJ57688/2026:0.0000701454,USA/CA-LACPHL-AY16574/2026:0.0000334266):0.0000020000,USA/EWR-GKISBBBJ84864/2026:0.0000668889):0.0000010000):0.0001221716,USA/GKISBBBI84878/2026:0.0001807172):0.0002915946,(((USA/CA-LACPHL-AY16489/2026:0.0002687031,((OZ477810:0.0000334430,USA/IAD-GKISBBBK78731/2026:0.0002365034):0.0000668889,USA/CO-CDPHE-46827694/2026:0.0000685093):0.0000010000):0.0001337897,((((USA/NJ-PHEL-V26006265/2026:0.0001349580,USA/JFK-GKISBBBI88434/2026:0.0003596639):0.0000010000,USA/JFK-GKISBBBJ79821/2026:0.0001672446):0.0000668889,((USA/IAD-GKISBBBI75218/2026:0.0000334430,USA/JFK-GKISBBBJ67693/2026:0.0000668889):0.0001672446,((USA/MN-MDH-50552/2026:0.0002723062,(USA/SFO-GKISBBBJ69722/2026:0.0000671158,USA/JFK-GKISBBBI73014/2026:0.0003565182):0.0000677648):0.0000020290,USA/SFO-GKISBBBJ31970/2026:0.0001668951):0.0000010000):0.0000010000):0.0000334436,((USA/MD-MDH-13312/2026:0.0001402895,(USA/IAD-GKISBBBI75768/2026:0.0002657642,USA/CO-CDPHE-47532072/2026:0.0001918530):0.0000380413):0.0000010000,USA/UT-UPHL-260807608873/2026:0.0004393688):0.0000010000):0.0000020152):0.0000334340,USA/MIA-GKISBBBH72455/2026:0.0005053562):0.0006264048):0.0001005141):0.0001444627):0.0001324534,USA/WA-UW-96997/2026:0.0010979236):0.0000694584,(USA/JFK-GKISBBBI94779/2026:0.0002145371,((USA/CA-LACPHL-AY16253/2026:0.0000671485,(USA/MN-MDH-50401/2026:0.0003705781,USA/NMDOH-2026008749/2026:0.0002694950):0.0000010000):0.0000010000,USA/CA-LACPHL-AY16285/2026:0.0001337897):0.0000010000):0.0003355815):0.0002549073,USA/NJ-PHEL-V26004387/2026:0.0012834978):0.0000371510,(USA/TN-SPHL-1800/2026:0.0007729220,BRA/LACENAL-270289589/2024:0.0004814841):0.0000362662):0.0001091752,IND/SPHL35/2023:0.0001015645):0.0001098743,(((USA/FL-CDC-QDX87530119/2023:0.0001337897,IND/hCoV-19_India_MP-AIIMSB_WGS2589_ST_24/2024:0.0001068661):0.0000010000,((IND/SPHL52/2023:0.0004736640,IND/hCoV-19_India_MP-AIIMSB_WGS2581_SA_24/2024:0.0000010000):0.0000010000,CMR/23V-12710_250117021/2023:0.0002437864):0.0002910682):0.0000010000,CHN/BJ-NVSI-20240048/2024:0.0002018366):0.0000010000):0.0000817275,(((CHN/437-2024/2024:0.0003697677,RUS/RUSPrimorye_P677/2024:0.0004384239):0.0000670411,PNG/VIC-VIDRL-00015354/2024:0.0002024191):0.0000023194,CHN/89-2024/2024:0.0001000700):0.0000325684):0.0003099292,USA/TN-SPHL-2370/2024:0.0001007925):0.0006543731,((((((((((OZ475044:0.0003022208,USA/NJ-PHEL-V26004321/2026:0.0001686737):0.0000020138,USA/SFO-GKISBBBK07138/2026:0.0002349862):0.0001003378,((USA/CA-LACPHL-AY16558/2026:0.0002007025,USA/MN-MDH-50582/2026:0.0000668889):0.0001008639,USA/SFO-GKISBBBJ38567/2026:0.0002214412):0.0000334174):0.0000029652,USA/SFO-GKISBBBJ98662/2026:0.0003364350):0.0002359137,IGS-10285-CVDP-1B456422-E9E7-4026-80F7-24AFBA690DBA:0.0003032292):0.0000333917,(USA/MN-MDH-50241/2026:0.0003769305,USA/NJ-PHEL-V26004009/2026:0.0005447498):0.0000376593):0.0000010000,USA/CA-LACPHL-AY16379/2026:0.0004717411):0.0000010000,(((USA/VT-26-001818-WGS-01/2026:0.0004980977,USA/CO-CDPHE-46462045/2026:0.0003197978):0.0000341811,((((((USA/CA-LACPHL-AY16542/2026:0.0001391643,((USA/UT-UPHL-260807666605/2026:0.0001028790,USA/CA-LACPHL-AY16439/2026:0.0002281180):0.0000010000,USA/SFO-GKISBBBH88026/2026:0.0004087843):0.0000010000):0.0002754703,(((USA/CA-LACPHL-AY16462/2026:0.0004369306,(USA/SEA-GKISBBBJ34592/2026:0.0002353222,USA/JFK-GKISBBBI84068/2026:0.0000668889):0.0001337897):0.0000339444,USA/SFO-GKISBBBJ69724/2026:0.0003462144):0.0000334430,(USA/SFO-GKISBBBJ29429/2026:0.0002648409,USA/GKISBBBI60413/2026:0.0002212919):0.0001851465):0.0000010000):0.0001672446,USA/UT-UPHL-260717828475/2026:0.0005140055):0.0001672446,(((((USA/MD-MDH-13075/2026:0.0003425171,USA/MN-MDH-50433/2026:0.0000699724):0.0000010000,USA/MN-MDH-50238/2026:0.0001034099):0.0000010000,USA/MN-MDH-50475/2026:0.0000334430):0.0001694456,USA/NJ-PHEL-V26002973/2026:0.0001764142):0.0001684239,LAO/LOMWRU-2011/2025:0.0001066142):0.0000010000):0.0000010069,(USA/CO-CDPHE-46827452/2026:0.0000608524,USA/CO-CDPHE-46827670/2026:0.0000010000):0.0005133582):0.0000010069,((((USA/MD-MDH-12992/2026:0.0006194732,USA/NC-USAFSAM-S24676/2026:0.0006075849):0.0000010000,CHN/2025101/2025:0.0003699266):0.0000010629,(USA/CO-CDPHE-46827624/2026:0.0003495841,USA/MN-MDH-50569/2026:0.0003038981):0.0000418967):0.0000010629,CHN/2025089/2025:0.0002007025):0.0000333672):0.0000029895):0.0000029652,((((((USA/MN-MDH-50476/2026:0.0000680359,USA/MN-MDH-50335/2026:0.0000010000):0.0001015573,IGS-10285-CVDP-C84434E2-84AC-497D-B204-A814B8458692:0.0005049715):0.0000670415,USA/MD-MDH-13043/2026:0.0004241648):0.0000020139,(((((((((((USA/VT-26-001863-WGS-01/2026:0.0002975827,USA/DE-DHSS-1971/2026:0.0004724701):0.0000356982,IGS-10285-CVDP-A01FDC38-EB11-4532-BD22-581AD5199A3D:0.0002020950):0.0000010000,OZ475059:0.0003371474):0.0000010000,USA/DC-CDC-10035861-001/2026:0.0002355311):0.0000010000,USA/OSPHL11059/2026:0.0001359509):0.0000010000,USA/NJ-PHEL-V26005261/2026:0.0003368838):0.0000010000,USA/IL-RIPHL_23126_G/2026:0.0003419177):0.0000027500,((USA/FL-BPHL-0027/2026:0.0001017762,USA/FL-BPHL-0028/2026:0.0000010000):0.0000333984,USA/FL-BPHL-0019/2026:0.0000687923):0.0003700291):0.0000010000,IGS-10285-CVDP-E50261A8-EA8E-4C99-885C-41FD33C88AD1:0.0002705005):0.0000020000,USA/MD-MDH-13139/2026:0.0002442854):0.0000339325,(OZ483525:0.0002411759,(USA/MN-MDH-50538/2026:0.0004046460,USA/9000/2026:0.0006515415):0.0000334430):0.0000020138):0.0001342630):0.0000010000,USA/CA-LACPHL-AY16269/2026:0.0003706187):0.0000010000,USA/DE-DHSS-1955/2026:0.0005062385):0.0000335168):0.0000028607):0.0000010000,((USA/MI-UM-10069997532/2026:0.0000334430,USA/IL-RIPHL_16258_G/2026:0.0002566553):0.0003366462,(USA/TX-DSHS-26962/2026:0.0005068244,USA/CO-CDPHE-47205506/2026:0.0003752522):0.0001007405):0.0000010000):0.0007919652,CHN/372-202407/2024:0.0003168303):0.0004610692):0.0006797852,CHN/HG/2023:0.0009274692):0.0007260758,RUS/RUSPrimorye_P236/2023:0.0008406071):0.0001739955,(((((((((((((((((((BGD/GRBL_S11/2020:0.0003680366,WestBank/AAS56/2021:0.0002007025):0.0000332850,IND/KA-NIMH-SEQ-91/2020:0.0004058496):0.0000022065,GMB/3030/2021:0.0005022798):0.0000022065,(((USA/Mayo21726/2020:0.0004349911,IND/KA-NIMH-SEQ-105/2021:0.0006773017):0.0000667093,MMR/Case176/2020:0.0001008130):0.0000010000,CHN/Qingdao_20426/2020:0.0003345638):0.0000010000):0.0000010000,MW342708:0.0004346431):0.0000010000,CHN/SH-P193-4-Asia-UAE/2020:0.0002354744):0.0000020000,((((((((((BGD/Laila_593/2021:0.0005480922,(((CHN/CS-Liu/2021:0.0001337897,Iraq/KR-SEARCH-120017/2021:0.0003041399):0.0000334430,IND/CWS_0084_52220027/2021:0.0001337897):0.0000667106,BRA/RJ-NVBS9672GENOV828356363088/2021:0.0003687215):0.0000010050):0.0000010050,(IDN/10761001096/2021:0.0001367843,MMR/DSMRC046/2021:0.0007378109):0.0000029664):0.0006011035,((USA/MN-CDC-IBX854565836419/2021:0.0004695366,(CHN/HK_Silka_1/2021:0.0002371025,PHL/COVID-75628/2021:0.0000774034):0.0001003378):0.0002007025,(KEN/SS2025/2021:0.0003281036,(THA/CONI-0882/2021:0.0002041942,BGD/Laila_97/2021:0.0000334430):0.0001337897):0.0000668889):0.0001017627):0.0003134023,IND/INSACOG-GBRC1383/2021:0.0010316023):0.0002590728,(((EGY/CPHL-NRC-18/2020:0.0000010000,VEN/LaG1414/2021:0.0004684729):0.0001003378,((((((JOR/SEARCH-2586-JOR/2020:0.0001770481,(((FRA/IHUCOVID-018204/2020:0.0008412576,((IDN/10752101004/2021:0.0003039047,IDN/10761001042/2021:0.0001744864):0.0000010000,(CHN/S146-1287-246321/2021:0.0001003378,CHN/S150-1309-249759/2021:0.0001672446):0.0000010000):0.0004025311):0.0000010000,IDN/10761001008/2020:0.0009740471):0.0000010000,IND/GBRC-371/2020:0.0002012025):0.0000020000):0.0000889207,OU072897:0.0000682222):0.0000012404,CUB/USAFSAM-S030/2020:0.0000334430):0.0000010000,(TUN/TUN-20212249/2021:0.0002341633,MZ330784:0.0002007025):0.0003010940):0.0000010000,(TZA/KIDH-03B13/2021:0.0001051244,CHN/GDIPH-GDPCC-05/2021:0.0002883370):0.0001807990):0.0000010000,IND/GBRC22/2020:0.0001337897):0.0000010000):0.0000025000,((((((AUS/VIC1364/2020:0.0001337897,KOR/235-Day1/2020:0.0001003378):0.0000010000,CHN/SH-P83-A-3-Europe-UK/2020:0.0003027148):0.0001337897,IRN/HGRC-01-IPI-8206/2020:0.0000699024):0.0000010000,(PHL/GS/2020:0.0000333686,((TLS/TL15/2020:0.0000334430,IND/GBRC114/2020:0.0001003378):0.0000295293,IND/GMCKN443/2020:0.0000020000):0.0000029652):0.0000334430):0.0000668889,Canisfamiliaris/ECU/DF-44/2021:0.0000449614):0.0000668144,IND/GMC-KP1125/2020:0.0000010000):0.0000666208):0.0000010000):0.0000010000,OY124717:0.0001003378):0.0000010000,GIN/C2/2020:0.0001003378):0.0001336854,(((NGA/BCVL-19050/2021:0.0004027409,NGA/CV528/2020:0.0002007025):0.0001672446,SAU/KAIMRC-S578/2021:0.0003345638):0.0000334430,(Japan/Donner396/2021:0.0002341633,Japan/TKYE614862_2020/2020:0.0000010000):0.0001337897):0.0000010000):0.0000010000,POL/PL_P41/2020:0.0002341633):0.0000010000,EGY/Third-Wave-EGY-ARMY52/2021:0.0005352452):0.0000022393):0.0000010000,LKA/COV53/2020:0.0000020000):0.0000333431,((PHL/PH-PGC-00315/2020:0.0001362369,Pakistan/UHS-PAK-S86/2021:0.0002349539):0.0000028402,BGD/BCSIR-SUST-02/2021:0.0000331404):0.0004025124):0.0000323839,(Argentina/UW21052315852/2021:0.0004332904,COL/SEC-0685I/2021:0.0000386165):0.0006474180):0.0009887716,(((((CHN/S431-821-522924/2022:0.0000668889,NGA/CV4843/2021:0.0000010000):0.0000010000,(OZ071349:0.0001705191,MEX/CMX_7257/2022:0.0002352134):0.0001003378):0.0000334430,USA/FL-BPHL-1969/2022:0.0002397075):0.0000010000,BRA/LACENAL-270216363/2022:0.0001704944):0.0001453217,BRA/33ABR22L03/2023:0.0001558523):0.0004417539):0.0006899761,((((((OZ483632:0.0002129975,USA/CA-LACPHL-AY16479/2026:0.0005902440):0.0000351225,(OZ483436:0.0002546197,USA/GKISBBBJ59071/2026:0.0003983517):0.0000393077):0.0000010000,OZ495090:0.0003119269):0.0000362498,OZ483646:0.0005893140):0.0001097885,USA/DE-DHSS-1981/2026:0.0001733303):0.0004751932,((((((((((USA/MA-MASPHL-15407/2026:0.0002437485,USA/CO-CDPHE-46827600/2026:0.0001085133):0.0000010000,USA/UT-UPHL-260814140606/2026:0.0002081214):0.0000010000,USA/VT-26-004040-WGS-01/2026:0.0004549798):0.0000010051,USA/CO-CDPHE-47205542/2026:0.0001905217):0.0000345967,(USA/DE-DHSS-1959/2026:0.0001118357,USA/MD-MDH-13264/2026:0.0002797348):0.0000346686):0.0000692759,((USA/MA-MASPHL-15427/2026:0.0000010000,USA/VT-26-004043-WGS-01/2026:0.0001947942):0.0000010000,(USA/DE-DHSS-1930/2026:0.0002330907,USA/MD-MDH-13086/2026:0.0000010000):0.0000356646):0.0000010000):0.0000010000,USA/MA-MASPHL-15393/2026:0.0002080466):0.0001741942,((USA/MN-MDH-50257/2026:0.0000715884,OZ483452:0.0002429298):0.0000020138,((((OZ483541:0.0000010000,OZ483454:0.0001201070):0.0001077435,OZ504930:0.0001389120):0.0001038252,USA/CO-CDPHE-47205536/2026:0.0005586841):0.0001736458,(OZ504933:0.0001075330,IGS-10285-CVDP-D0F64B99-0E7F-469F-A132-D369290FD038:0.0001957727):0.0001171968):0.0000010000):0.0002452760):0.0000010000,(USA/MN-MDH-50507/2026:0.0002469134,OZ483377:0.0000692867):0.0002772729):0.0000820988,(OZ483376:0.0000010000,OZ483624:0.0000361940):0.0003294421):0.0001380144):0.0023517209):0.0005488906,((((IND/hCoV-19_India_MP-AIIMSB_WGS2585_ST_22/2022:0.0002723749,RUS/9774/2022:0.0003694180):0.0000020139,CHN/2022A_XG32601/2022:0.0002020669):0.0000668229,((Austria/Risch-20220714R12733/2022:0.0000874608,USA/MN-MDH-50564/2026:0.0035753045):0.0002722479,Atelesfusciceps/ECU/Atl.3_feces/2022:0.0000937717):0.0000022988):0.0002686144,IND/NGS-720/2022:0.0004035216):0.0001895937):0.0000780599,(CHN/S441-1341-110441/2022:0.0000678889,((CHN/LA-3345/2022:0.0001672446,CHN/NJ_16/2022:0.0000010000):0.0000020000,(CHN/S842-5086-645236/2022:0.0002353738,NIC/CNDR-13222-01/2022:0.0000745036):0.0001003378):0.0000010000):0.0000010000):0.0000010000,MYS/M36_10736/2022:0.0002191391):0.0000010000,BGD/BD_B_220309_04/2022:0.0000690044):0.0000334188,(IND/NIB259321/2022:0.0000671484,IND/LNHD132/2022:0.0001035270):0.0000333693):0.0000029620,(USA/MD-CDC-LC0600345/2022:0.0001085827,IND/NGS-755/2022:0.0001682468):0.0001007022):0.0002669006,OX942935:0.0009063608):0.0002438948):0.0001553067,((((((((CHN/SARS-CoV-2_XBB/2023:0.0002025474,QAT/DA-USAFSAM-S21612/2023:0.0002689673):0.0003025697,POL/220-Day1/2023:0.0004398678):0.0000668889,((CHN/GDCDC_SZHG_2251/2023:0.0005051800,(CHN/GDCDC_GZHG_1146/2023:0.0003695416,CHN/GDCDC_GZ_0281/2023:0.0003697954):0.0000010000):0.0000010000,((IND/NICPR437/2023:0.0005146399,IND/hCoV-19_India_MP-AIIMSB_WGS2582_SW_23/2023:0.0001028051):0.0000022988,Japan/PG-573477/2023:0.0001672446):0.0002931950):0.0000334064):0.0000668889,(ZAF/179-Day1/2023:0.0002368145,VNM/NHTD-OUCRU3930/2023:0.0003025982):0.0000010000):0.0000010000,OZ370674:0.0002341633):0.0001004019,KWT/JA-USAFSAM-S21169/2022:0.0000329411):0.0000661995,IND/NGS-1439/2023:0.0001473979):0.0000729113,IND/Sample124/2022:0.0001522416):0.0000010000);
+
+ALISIM COMMAND
+--------------
+To simulate an alignment of the same length as the original alignment, using the tree and model parameters estimated from this analysis, you can use the following command:
+
+--alisim simulated_MSA -t t239438346_b1_s2025_spr_ad2s2a.treefile -m "GTR{0.568225,2.20562,0.255354,0.332124,5.72577}+F{0.302464,0.179193,0.193643,0.3247}" --length 29903
+
+To mimic the alignment used to produce this analysis, i.e. simulate an alignment of the same length as the original alignment, using the tree and model parameters estimated from this analysis *and* copying the same gap positions as the original alignment, you can use the following command:
+
+iqtree -s /geode3/home/u100/trihahn/Quartz/Desktop/iqtree3spr/iqtree3/acceptdist_results/t239438346/aln/boot1.fasta --alisim mimicked_MSA
+
+To simulate any number of alignments in either of the two commandlines above, use the --num-alignments options, for example mimic 100 alignments you would use the command line:
+
+iqtree -s /geode3/home/u100/trihahn/Quartz/Desktop/iqtree3spr/iqtree3/acceptdist_results/t239438346/aln/boot1.fasta --alisim mimicked_MSA --num-alignments 100
+
+For more information on using AliSim, please visit: www.iqtree.org/doc/AliSim
+
+TIME STAMP
+----------
+
+Date and time: Fri Sep 11 05:10:32 2026
+Total CPU time used: 2300.91 seconds (0h:38m:20s)
+Total wall-clock time used: 1435.77 seconds (0h:23m:55s)
+

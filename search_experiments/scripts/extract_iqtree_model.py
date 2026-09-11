@@ -4,7 +4,7 @@ Turn a real iqtree3 run's fitted model parameters -- WHICHEVER model
 ModelFinder (-m MFP/TEST/...) actually selected, not a fixed one chosen up
 front -- into a literal IQ-TREE model spec string usable by
 spr_topology_test's own "model <spec>" --hillclimb flag
-(tree/spr_topology_test.cpp), so a search there can start from the same
+(search_experiments/spr_topology_test.cpp), so a search there can start from the same
 ML-estimated parameters the external iqtree3 run already fit, instead of
 either spr_topology_test's own un-fit starting values or having no way to
 supply them at all.
@@ -56,7 +56,7 @@ Usage:
     python3 extract_iqtree_model.py <run.iqtree>
 
 Example, feeding the result straight into spr_topology_test:
-    MODEL_SPEC="$(python3 test_scripts/extract_iqtree_model.py nni_run.iqtree)"
+    MODEL_SPEC="$(python3 search_experiments/scripts/extract_iqtree_model.py nni_run.iqtree)"
     build/spr_topology_test --hillclimb real.fa 10 10000 fast quiet notree \\
         starttree nni_run.treefile model "$MODEL_SPEC" gtr record
 """
