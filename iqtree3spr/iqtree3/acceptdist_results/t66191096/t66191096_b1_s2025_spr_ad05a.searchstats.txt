@@ -1,1 +1,0 @@
-prefix=t66191096_b1_s2025_spr_ad05a seed=2025 iterations=15 best_logl=-82324.82983 cpu_seconds=2238.650769 wall_seconds=1402.172308 refiner=spr kick=none accept_dist=on accept_temp=0.5 accept_shape=1 accept_anneal=yes accept_floor=0 accept_last_temp=0.03333333333 downhill_kept=4270 downhill_offered=21600 bestseen_restored=yes slack=off tunnel=off candidates_evaluated=40623
